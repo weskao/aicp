@@ -54,10 +54,21 @@ class Budget:
     note: str
 
 
-def _int_env(name: str) -> int | None:
+def _env(name: str, default: str) -> str:
+    """*name*'s value, treating exported-but-EMPTY as unset.
+
+    zsh sets every knob with ``: "${AICP_TIMEOUT_BASE:=180}"``, and ``:=``
+    substitutes the default for an unset **or empty** variable — so
+    ``AICP_TIMEOUT_BASE=""`` computes a real formula there rather than being
+    reported as a bad value. ``os.environ.get`` alone would not.
+    """
     raw = os.environ.get(name)
-    if raw is None:
-        return _DEFAULTS[name]
+    return default if raw is None or raw == "" else raw
+
+
+def _int_env(name: str) -> int | None:
+    """The knob as an int, or None if it is set to something non-numeric."""
+    raw = _env(name, str(_DEFAULTS[name]))
     return int(raw) if _INT.match(raw) else None
 
 
@@ -85,15 +96,27 @@ def _pending(cwd: Path | None) -> tuple[int, int]:
 
 def _history(cli: str) -> int:
     """This CLI's largest successful run, multiplied out — 0 if there is none."""
-    raw_lines = os.environ.get("AICP_TIMEOUT_HISTORY_LINES", "500")
+    raw_lines = _env("AICP_TIMEOUT_HISTORY_LINES", "500")
     lines = int(raw_lines) if _INT.match(raw_lines) else 0
     try:
-        mult = float(os.environ.get("AICP_TIMEOUT_HISTORY_MULT", "1.3"))
+        mult = float(_env("AICP_TIMEOUT_HISTORY_MULT", "1.3"))
     except ValueError:
         return 0  # unusable multiplier: no widening, same as no history at all
     best = timing.max_ok_seconds(cli, lines=lines)
-    # `(max * mult) + 0.999999` truncated — the zsh/awk expression, i.e. ceil.
-    return int(best * mult + 0.999999) if best > 0 else 0
+    if best <= 0:
+        return 0
+    try:
+        # `(max * mult) + 0.999999` truncated — the zsh/awk expression, i.e. ceil.
+        widened = int(best * mult + 0.999999)
+    except (OverflowError, ValueError):
+        # float() accepts "inf"/"1e400"/"nan" without raising above, and the
+        # product then has no integer form at all. The zsh original gates the
+        # awk result the same way afterwards -- `[[ "$history" == <-> ]] ||
+        # history=0` -- rather than trusting the computation; a value settable
+        # from .aicprc must never be able to crash aicp in every repo on the
+        # machine, which is this module's stated no-crash invariant.
+        return 0
+    return max(widened, 0)
 
 
 def compute(cli: str, *, cwd: Path | None = None) -> Budget:

@@ -137,6 +137,20 @@ def test_a_malformed_timeout_knob_falls_back_to_the_floor(git_repo, monkeypatch,
     assert "AICP_TIMEOUT_" in result.note
 
 
+@pytest.mark.parametrize("knob", ["BASE", "PER_FILE", "PER_100L", "MAX"])
+def test_an_exported_but_empty_knob_uses_the_default(git_repo, monkeypatch, knob):
+    """zsh's ``: "${AICP_TIMEOUT_BASE:=180}"`` treats empty as unset.
+
+    An exported-but-empty knob must therefore take the default and compute a
+    real formula, not be reported as a bad value.
+    """
+    monkeypatch.setenv(f"AICP_TIMEOUT_{knob}", "")
+    pending(git_repo, "pending.txt")
+    result = budget.compute("copilot", cwd=git_repo)
+    assert result.seconds == 195  # the defaults' own 180 + 1*15
+    assert "AICP_TIMEOUT_" not in result.note
+
+
 # ── history widening ─────────────────────────────────────────────────────────
 
 
@@ -190,7 +204,22 @@ def test_the_history_multiplier_is_configurable(git_repo, knobs, history, monkey
     assert budget.compute("copilot", cwd=git_repo).seconds == 200
 
 
-@pytest.mark.parametrize("mult", ["not-a-number", ""])
+@pytest.mark.parametrize(
+    "mult",
+    [
+        "not-a-number",
+        # float() accepts these without raising; the arithmetic they produce
+        # then cannot be an integer at all. The zsh original catches them with
+        # its post-computation `[[ "$history" == <-> ]]` gate (bin/aicp:620),
+        # and so must the port — a value settable from .aicprc must never be
+        # able to crash aicp in every repo on the machine.
+        "inf",
+        "-inf",
+        "1e400",
+        "nan",
+        "-2",
+    ],
+)
 def test_a_malformed_multiplier_disables_widening_rather_than_crashing(
     git_repo, knobs, history, monkeypatch, mult
 ):
@@ -198,6 +227,17 @@ def test_a_malformed_multiplier_disables_widening_rather_than_crashing(
     knobs(base=10, per_file=0, per_100l=0, max=1000)
     monkeypatch.setenv("AICP_TIMEOUT_HISTORY_MULT", mult)
     assert budget.compute("copilot", cwd=git_repo).seconds == 10
+
+
+@pytest.mark.parametrize("knob", ["HISTORY_MULT", "HISTORY_LINES"])
+def test_an_exported_but_empty_history_knob_uses_the_default(
+    git_repo, knobs, history, monkeypatch, knob
+):
+    """Empty is unset here too — the widening must still happen."""
+    history(row("copilot", "500", "ok"))
+    knobs(base=10, per_file=0, per_100l=0, max=1000)
+    monkeypatch.setenv(f"AICP_TIMEOUT_{knob}", "")
+    assert budget.compute("copilot", cwd=git_repo).seconds == 650
 
 
 # ── a broken log is never an outage of the timeout protection ────────────────

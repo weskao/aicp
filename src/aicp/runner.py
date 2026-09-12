@@ -60,7 +60,15 @@ from aicp.contracts import NotifyFn
 from aicp.i18n import t
 from aicp.present import Spinner
 
-__all__ = ["ABORT_RC", "KILL_AFTER", "TIMEOUT_RC", "classify", "invoke_argv", "run_step"]
+__all__ = [
+    "ABORT_RC",
+    "KILL_AFTER",
+    "TIMEOUT_RC",
+    "classify",
+    "invoke_argv",
+    "normalize_rc",
+    "run_step",
+]
 
 TIMEOUT_RC = 124  # GNU timeout's own "the command timed out" status
 ABORT_RC = 130    # 128 + SIGINT
@@ -133,6 +141,14 @@ def _invoke(
 
     ``seconds <= 0`` means no timeout at all (GNU timeout reads 0 the same
     way), and takes the bare :func:`~aicp._utils.run_interruptible` path.
+
+    The timed path cannot compose with ``run_interruptible``: enforcing a
+    deadline needs the ``Popen`` handle (to SIGTERM, then SIGKILL, the child),
+    and ``run_interruptible`` owns its own and exposes no timeout hook. The
+    process-group posture below is therefore kept deliberately identical to
+    it — same group on POSIX, ``CREATE_NEW_PROCESS_GROUP`` plus forwarded
+    ``CTRL_BREAK_EVENT`` on Windows — and a change to either must be made in
+    both places.
     """
     kwargs: dict[str, object] = {"cwd": cwd}
     if IS_WINDOWS:
@@ -183,6 +199,14 @@ def _capture_to(path: Path | None) -> Iterator[object | None]:
         return
     with open(path, "w", encoding="utf-8") as handle:
         yield handle
+
+
+def _notify_quietly(notify: NotifyFn, message: str) -> None:
+    """Send *message*, swallowing any failure — see the call site's comment."""
+    try:
+        notify(message)
+    except Exception:  # noqa: BLE001 - an injected notifier's failure modes are not knowable here
+        return
 
 
 def _replay(log: Path, out) -> None:
@@ -257,7 +281,13 @@ def run_step(
             if outcome == "timeout":
                 note = t("step_timeout_note", "timed out (> %ss)", allowed.seconds)
                 print(f"  {YELLOW}⏱{RESET} {CYAN}{cli}{RESET}{DIM}  {elapsed}s · {note}{RESET}", file=out)
-                notify(
+                # A notifier that fails must never abort a run that would
+                # otherwise commit and push: the zsh `_aicp_notify` returns 1
+                # at worst (it prints "(telegram unavailable)" and carries on)
+                # and `_ai_run` ignores that status. T4 owns the injected
+                # implementation, so its failure mode is not knowable here.
+                _notify_quietly(
+                    notify,
                     t(
                         "tg_timeout",
                         '⏱️ aicp: %s timed out running "%s" on %s (over the %ss budget, %s)'

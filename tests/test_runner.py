@@ -9,6 +9,7 @@ fall through to the next CLI.
 
 from __future__ import annotations
 
+import ast
 import io
 import os
 import signal
@@ -210,7 +211,7 @@ def test_a_cli_actually_killed_by_a_signal_aborts_the_chain(sh_stub, tmp_path, t
 
 
 @POSIX_ONLY
-def test_ctrl_c_reaches_a_cli_running_under_the_budget(sh_stub, tmp_path, monkeypatch):
+def test_ctrl_c_reaches_a_cli_running_under_the_budget(sh_stub, tmp_path, timing_log):
     """The regression `timeout --foreground` existed to fix.
 
     If the child were put in a NEW process group, the terminal's SIGINT would
@@ -244,6 +245,11 @@ def test_ctrl_c_reaches_a_cli_running_under_the_budget(sh_stub, tmp_path, monkey
             os.killpg(os.getpgid(child.pid), signal.SIGKILL)
             child.wait()
     assert called(log) == ["copilot"]  # aborted, never fell through to agy
+    # The zsh original's INT trap exits before _ai_run can log this attempt, so
+    # a terminal Ctrl+C left no row at all while a CLI that exited 130 on its
+    # own did. The port records both — same bucket for the same event — which
+    # costs nothing: the history reader counts only `ok` rows.
+    assert outcomes(timing_log)[0][4:] == ["abort", "130"]
 
 
 # ── timeouts: kill the CLI, then fall through ────────────────────────────────
@@ -277,6 +283,27 @@ def test_a_timeout_notifies_and_names_the_cli_and_budget(sh_stub, tmp_path, monk
     run(chain=("copilot", "agy"), notify=sent.append)
     assert len(sent) == 1
     assert "copilot" in sent[0] and "/commit" in sent[0] and "1s" in sent[0]
+
+
+@POSIX_ONLY
+def test_a_failing_notifier_never_breaks_the_chain(sh_stub, tmp_path, monkeypatch):
+    """The zsh ``_aicp_notify`` returns 1 at worst and ``_ai_run`` ignores it.
+
+    A notifier that raises must therefore not abort a run that would otherwise
+    have committed and pushed — the whole point of the step it interrupts is
+    that the chain keeps going.
+    """
+    log = tmp_path / "notify-calls.log"
+    sh_stub("copilot", "sleep 30\n")
+    sh_stub("agy", f'echo agy >> "{log}"\nexit 0\n')
+    monkeypatch.setenv("AICP_STEP_TIMEOUT", "1")
+
+    def explode(_message: str) -> None:
+        raise RuntimeError("telegram is down")
+
+    rc, _ = run(chain=("copilot", "agy"), notify=explode)
+    assert rc == 0
+    assert called(log) == ["agy"]
 
 
 def test_a_plain_failure_never_notifies(stub_cli):
@@ -321,17 +348,38 @@ def test_verbose_streams_child_output_live(sh_stub, capfd):
 # ── the runner stays decoupled from its siblings ─────────────────────────────
 
 
-def test_the_runner_imports_no_sibling_module(monkeypatch):
-    source = Path(runner.__file__).read_text()
-    for forbidden in ("config", "notify", "gitflow", "secrets", "skills"):
-        assert f"import {forbidden}" not in source
-        assert f"from aicp.{forbidden}" not in source
-        assert f"from .{forbidden}" not in source
+def test_the_runner_imports_no_sibling_module():
+    """The decoupling four workers depend on, enforced against the AST.
+
+    Parsed rather than grepped: a substring check misses ``import aicp.config``
+    (no ``from``), and this test is the only mechanism holding the rule while
+    the sibling modules are written concurrently.
+    """
+    forbidden = {"config", "notify", "gitflow", "secrets", "skills"}
+    tree = ast.parse(Path(runner.__file__).read_text())
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = ("." * node.level) + (node.module or "")
+            imported.add(base)
+            imported.update(f"{base}.{alias.name}" for alias in node.names)
+    leaves = {name.rsplit(".", 1)[-1] for name in imported}
+    assert not (leaves & forbidden), f"runner.py imports a sibling: {leaves & forbidden}"
+    assert "aicp.budget" in imported and "aicp.timing" in imported  # the AST really parsed
 
 
-def test_the_default_notifier_is_a_no_op(stub_cli):
-    stub_cli()
-    assert run(chain=("copilot",))[0] == 0  # no notify= passed at all
+@POSIX_ONLY
+def test_the_default_notifier_is_a_no_op(sh_stub, monkeypatch, capfd):
+    """Exercised on the timeout path — the one branch that actually notifies."""
+    sh_stub("copilot", "sleep 30\n")
+    sh_stub("agy", "exit 0\n")
+    monkeypatch.setenv("AICP_STEP_TIMEOUT", "1")
+    rc, out = run(chain=("copilot", "agy"))  # no notify= passed at all
+    assert rc == 0
+    assert capfd.readouterr().out == ""  # the default notifier says nothing
+    assert "timed out" in out
 
 
 def test_an_unwritable_timing_log_never_breaks_a_run(stub_cli, tmp_path, monkeypatch):
