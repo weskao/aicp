@@ -27,7 +27,7 @@ name.
 
 from __future__ import annotations
 
-import shutil
+import os
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,13 +80,17 @@ BACKUP_SUFFIX = ".bak"
 
 
 def _vendor_dir() -> Path:
+    """Where the vendored copies live: installed wheel first, then checkout.
+
+    ``_skills_data`` (not ``skills``) is the in-package name, so it can't
+    shadow this module. Shipping it needs one key in pyproject.toml::
+
+        [tool.hatch.build.targets.wheel.force-include]
+        "skills" = "aicp/_skills_data"
+    """
     here = Path(__file__).resolve().parent
-    # Installed layout first (skills/ shipped inside the package), then the
-    # source checkout (repo-root skills/, next to src/).
-    for candidate in (here / "skills", here.parent.parent / "skills"):
-        if candidate.is_dir():
-            return candidate
-    return here.parent.parent / "skills"
+    installed, checkout = here / "_skills_data", here.parent.parent / "skills"
+    return installed if installed.is_dir() else checkout
 
 
 #: Root of the byte-identical vendored copies.
@@ -315,7 +319,10 @@ def _write(dest: Path, data: bytes, *, backup: bool) -> Path | None:
     saved: Path | None = None
     if backup and dest.exists():
         saved = dest.with_name(dest.name + BACKUP_SUFFIX)
-        shutil.move(str(dest), str(saved))
+        # os.replace, not shutil.move: a second forced install would hit an
+        # existing .bak, and shutil.move's os.rename raises FileExistsError
+        # on Windows in that case. os.replace overwrites on every platform.
+        os.replace(dest, saved)
     dest.write_bytes(data)
     return saved
 

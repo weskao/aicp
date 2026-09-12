@@ -242,6 +242,24 @@ def test_force_overwrites_foreign_and_leaves_a_bak(configured):
     assert backup in [r.backup for r in results if r.skill == "commit"]
 
 
+def test_a_second_forced_install_replaces_an_existing_bak(configured):
+    """shutil.move would raise FileExistsError here on Windows; os.replace
+    overwrites the stale backup on every platform."""
+    h = configured("codex")
+    target = h / ".codex/skills/commit/SKILL.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("first\n", encoding="utf-8")
+    skills.install([cli("codex")], home=h, force=True)
+    target.write_text("second\n", encoding="utf-8")
+    (target.with_name(target.name + SKILL_VERSION_SUFFIX)).unlink()  # foreign again
+
+    skills.install([cli("codex")], home=h, force=True)
+
+    assert target.with_name(target.name + ".bak").read_text(encoding="utf-8") == (
+        "second\n"
+    )
+
+
 def test_force_backs_up_files_inside_a_directory_skill(configured):
     h = configured("codex")
     target = h / ".codex/skills/safe-git-push"
