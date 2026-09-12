@@ -128,6 +128,28 @@ that, and even then the original is moved aside to `<name>.bak` (numbered
 `.bak.1`, `.bak.2`, … so a second forced install never clobbers the first
 backup) before aicp writes its own copy.
 
+### This repo's own CI
+
+`.github/workflows/ci.yml` runs the suite on **macOS, Linux, and Windows** in
+parallel (`fail-fast: false`, so one platform failing still tells you about the
+other two), then builds the wheel, installs it into a throwaway venv, and checks
+that the console script runs and the vendored skills survived packaging.
+
+A failed run on a `push` also sends one Telegram message. Failure-only is
+deliberate: a notification on every green push is one nobody reads.
+
+The credentials are **repo secrets — never committed**. The workflow reads them
+through `${{ secrets.* }}` and skips quietly when they're unset, so a fork or a
+fresh clone gets no second red X on top of the real failure. To enable it:
+
+```sh
+gh secret set TELEGRAM_BOT_TOKEN -R <owner>/<repo>   # paste the bot token
+gh secret set TELEGRAM_CHAT_ID   -R <owner>/<repo>   # paste the chat id
+```
+
+Verify with `gh secret list -R <owner>/<repo>` — GitHub shows the names and
+timestamps only; secret values can never be read back, by you or by CI logs.
+
 ## Configuration
 
 `.aicprc` lives at `~/.aicprc` (override the path itself with `AICP_CONFIG`,

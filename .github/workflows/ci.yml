@@ -80,3 +80,43 @@ jobs:
                   ],
                   check=True,
               )
+
+  # Failure-only pager. A green run sends nothing on purpose: a notification
+  # that arrives on every push is one nobody reads. Credentials live in repo
+  # secrets, never in this file — see README "CI notifications" for the two
+  # `gh secret set` commands that configure them.
+  notify-telegram:
+    needs: test
+    if: ${{ failure() && github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Notify Telegram
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          # Unconfigured secrets are a valid state (a fork, or a clone whose
+          # owner never set them up). Skip quietly instead of failing the job
+          # and reporting a second, misleading red X on top of the real one.
+          if [ -z "$TOKEN" ] || [ -z "$CHAT_ID" ]; then
+            echo "::notice::TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — skipping notification"
+            exit 0
+          fi
+          # parse_mode=HTML: a branch or commit subject containing < & > would
+          # otherwise produce unparseable markup and Telegram would 400.
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+          ci_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          message="🚨 <b>CI failed</b>
+
+          <b>Repository:</b> <code>$(esc "$GITHUB_REPOSITORY")</code>
+          <b>Branch:</b> <code>$(esc "$GITHUB_REF_NAME")</code>
+          <b>Commit:</b> <code>$(esc "${GITHUB_SHA::7}")</code>
+
+          <a href=\"$ci_url\">Open failed CI run</a>"
+          curl --fail --silent --show-error --max-time 30 \
+            --data-urlencode "chat_id=$CHAT_ID" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "disable_web_page_preview=true" \
+            --data-urlencode "text=$message" \
+            "https://api.telegram.org/bot$TOKEN/sendMessage"
