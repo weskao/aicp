@@ -301,7 +301,13 @@ def status_json(
 
 
 def _rewrite(data: bytes, platform: Platform) -> bytes:
-    """Point the vendored text at *this* CLI's config dir and memory file."""
+    """Point the vendored text at *this* CLI's config dir and memory file.
+
+    Plain substring replacement, which is safe only because of an invariant
+    of the vendored text: every ``.claude`` / ``CLAUDE.md`` in it is a path
+    or filename reference (4 of them, all in ``skills/commit.md``). Re-vendor
+    something containing e.g. ``.claude-foo`` and this needs word boundaries.
+    """
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
@@ -313,22 +319,44 @@ def _rewrite(data: bytes, platform: Platform) -> bytes:
     )
 
 
+def _backup_path(dest: Path) -> Path:
+    """The first free ``<name>.bak``, ``<name>.bak.1``, ``<name>.bak.2``…
+
+    Numbered, because a backup is never allowed to overwrite a backup: a
+    forced install parks the user's own file at ``<name>.bak``, and a *later*
+    version bump turns that install into an ``ours_older`` upgrade, which
+    would otherwise move our own vendored copy over the only surviving copy
+    of their original.
+    """
+    candidate = dest.with_name(dest.name + BACKUP_SUFFIX)
+    index = 1
+    while candidate.exists():
+        candidate = dest.with_name(f"{dest.name}{BACKUP_SUFFIX}.{index}")
+        index += 1
+    return candidate
+
+
 def _write(dest: Path, data: bytes, *, backup: bool) -> Path | None:
     """Write *data* to *dest*, moving any existing file aside first."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     saved: Path | None = None
     if backup and dest.exists():
-        saved = dest.with_name(dest.name + BACKUP_SUFFIX)
-        # os.replace, not shutil.move: a second forced install would hit an
-        # existing .bak, and shutil.move's os.rename raises FileExistsError
-        # on Windows in that case. os.replace overwrites on every platform.
+        saved = _backup_path(dest)
+        # os.replace rather than shutil.move: shutil.move's os.rename raises
+        # FileExistsError on Windows if the destination is taken, and this
+        # one is only free as of the check above.
         os.replace(dest, saved)
     dest.write_bytes(data)
     return saved
 
 
-def _is_sidecar(name: str) -> bool:
-    return name == SKILL_VERSION_MARKER or name.endswith(SKILL_VERSION_SUFFIX)
+def _skip(name: str) -> bool:
+    """Sidecars are rewritten separately; macOS sprinkles .DS_Store around."""
+    return (
+        name == SKILL_VERSION_MARKER
+        or name.endswith(SKILL_VERSION_SUFFIX)
+        or name == ".DS_Store"
+    )
 
 
 def _copy(skill: Skill, target: Path, platform: Platform) -> Path | None:
@@ -338,10 +366,16 @@ def _copy(skill: Skill, target: Path, platform: Platform) -> Path | None:
     during the copy and written fresh at the end, so it always carries the
     version that actually installed the files.
     """
+    if not skill.source.exists():
+        # Without this, a directory skill whose source is missing (an
+        # unpackaged wheel — see _vendor_dir) would copy zero files and still
+        # write the sidecar, so detect() would report CURRENT forever.
+        raise FileNotFoundError(f"vendored skill is missing: {skill.source}")
+
     first_backup: Path | None = None
     if skill.is_dir:
         for src in sorted(skill.source.rglob("*")):
-            if not src.is_file() or _is_sidecar(src.name):
+            if not src.is_file() or _skip(src.name):
                 continue
             saved = _write(
                 target / src.relative_to(skill.source),

@@ -16,6 +16,7 @@ from __future__ import annotations
 import builtins
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -242,22 +243,70 @@ def test_force_overwrites_foreign_and_leaves_a_bak(configured):
     assert backup in [r.backup for r in results if r.skill == "commit"]
 
 
-def test_a_second_forced_install_replaces_an_existing_bak(configured):
-    """shutil.move would raise FileExistsError here on Windows; os.replace
-    overwrites the stale backup on every platform."""
+def test_a_backup_never_overwrites_an_earlier_backup(configured):
+    """The data-loss path: a forced install parks the user's own file at
+    ``.bak``; a later upgrade must not move our own copy over it."""
     h = configured("codex")
     target = h / ".codex/skills/commit/SKILL.md"
     target.parent.mkdir(parents=True)
-    target.write_text("first\n", encoding="utf-8")
-    skills.install([cli("codex")], home=h, force=True)
-    target.write_text("second\n", encoding="utf-8")
-    (target.with_name(target.name + SKILL_VERSION_SUFFIX)).unlink()  # foreign again
+    target.write_text("the user's own skill\n", encoding="utf-8")
 
     skills.install([cli("codex")], home=h, force=True)
+    # Now the later version bump: our sidecar goes stale, so a plain
+    # (non-force) install upgrades — and wants to back up again.
+    target.with_name(target.name + SKILL_VERSION_SUFFIX).write_text(
+        "x-aicp-version: 0.0.1\n", encoding="utf-8"
+    )
+    target.write_text("aicp 0.0.1 body\n", encoding="utf-8")
+
+    results = skills.install([cli("codex")], home=h)
 
     assert target.with_name(target.name + ".bak").read_text(encoding="utf-8") == (
-        "second\n"
+        "the user's own skill\n"
     )
+    assert target.with_name(target.name + ".bak.1").read_text(encoding="utf-8") == (
+        "aicp 0.0.1 body\n"
+    )
+    assert [r.backup for r in results if r.skill == "commit"] == [
+        target.with_name(target.name + ".bak.1")
+    ]
+
+
+def test_a_missing_vendored_source_raises_instead_of_faking_success(
+    configured, monkeypatch
+):
+    """A directory skill whose source is gone would otherwise copy nothing,
+    still write the sidecar, and then report CURRENT forever."""
+    h = configured("codex")
+    monkeypatch.setitem(
+        skills.SKILLS,
+        "safe-git-push",
+        replace(skills.SKILLS["safe-git-push"], source=h / "nowhere"),
+    )
+
+    with pytest.raises(FileNotFoundError, match="vendored skill is missing"):
+        skills.install([cli("codex")], home=h)
+
+    assert not (h / ".codex/skills/safe-git-push").exists()
+
+
+def test_junk_files_are_not_installed(configured, tmp_path):
+    """A .DS_Store in the vendored tree must not be copied into every CLI."""
+    vendored = tmp_path / "vendored-sgp"
+    vendored.mkdir()
+    (vendored / "SKILL.md").write_text("body\n", encoding="utf-8")
+    (vendored / ".DS_Store").write_bytes(b"\x00junk")
+    h = configured("codex")
+    installed = h / ".codex/skills/safe-git-push"
+
+    skills._copy(
+        replace(skills.SKILLS["safe-git-push"], source=vendored),
+        installed,
+        skills.PLATFORMS[".codex"],
+    )
+
+    assert (installed / "SKILL.md").is_file()
+    assert not (installed / ".DS_Store").exists()
 
 
 def test_force_backs_up_files_inside_a_directory_skill(configured):
