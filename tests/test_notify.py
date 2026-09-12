@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import stat
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -74,6 +75,30 @@ def test_a_script_that_fails_degrades_to_the_printed_line(
 
     notify("hello")
 
+    assert "telegram unavailable" in capsys.readouterr().out
+
+
+@posix_only
+def test_a_hung_script_is_bounded_and_degrades_to_the_printed_line(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    """A notifier that never returns must not hold the whole run hostage.
+
+    The docstring promises this degrades to a printed line; without a bound on
+    the subprocess it degrades to nothing at all, forever — the run is already
+    past the work that mattered and is blocked on telling someone about it.
+    """
+    script = tmp_path / "tg-send.sh"
+    script.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("AICP_TG_SEND", str(script))
+    monkeypatch.setattr(notify_module, "SEND_TIMEOUT", 0.5)
+
+    started = time.monotonic()
+    notify("hello")  # must not raise, and must not wait out the sleep
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 10, f"the hung notifier blocked for {elapsed:.1f}s"
     assert "telegram unavailable" in capsys.readouterr().out
 
 

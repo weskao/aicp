@@ -30,6 +30,14 @@ from .i18n import t
 
 __all__ = ["notify", "tg_send_script"]
 
+# Seconds the send script gets before it is killed and the printed line takes
+# over. A notification is the last step of a run that has usually already
+# committed and pushed, so an unbounded wait here holds the whole run hostage
+# to a hung network call — the exact opposite of the "degrades to a printed
+# line" promise in this module's docstring. Generous enough for a real
+# Telegram round trip, short enough that nobody watches a dead terminal.
+SEND_TIMEOUT = 15.0
+
 
 def tg_send_script() -> Path:
     """``$AICP_TG_SEND``, else ``$HOME/.claude/scripts/tg-send.sh``."""
@@ -57,8 +65,12 @@ def _send(message: str) -> bool:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
+            timeout=SEND_TIMEOUT,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
+        # A hung script degrades exactly like a missing one: subprocess.run has
+        # already killed and reaped it by the time TimeoutExpired is raised, so
+        # nothing is left running and the caller gets the printed line.
         return False
     return done.returncode == 0
 
