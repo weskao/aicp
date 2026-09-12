@@ -2,10 +2,21 @@
 #
 # Precedence, highest to lowest: environment variable > this file > the
 # hardcoded default. Only KEY=value lines matching AICP_[A-Z0-9_]* are read;
-# blank lines and #-comments are skipped. Ported from the same loader in
-# ~/scripts/bin/aicp — see that file's header comment for the full posture
-# (parsed, never sourced/eval'd; two knobs are environment-variable only and
-# refused here: AICP_TG_SEND, AICP_TIMING_LOG).
+# blank lines, #-comments, and values outside the letters/digits/`/.​_:@+-`
+# charset are skipped individually — one bad line never costs the rest of
+# the file. Parsed line by line, never sourced or eval'd.
+#
+# Two knobs are refused here no matter how they're spelled, because each one
+# names a path that later gets EXECUTED or WRITTEN — a `.aicprc` can arrive
+# synced from someone else's dotfiles repo, and that class of value must stay
+# a real-environment-only decision:
+#   AICP_TG_SEND    — run as a script when sending a Telegram notification.
+#   AICP_TIMING_LOG — target of mkdir -p / >> / rotation.
+# Set either one in your shell instead; a line for it here is ignored with a
+# warning on stderr.
+#
+# Every line below is commented out — copying this file changes nothing
+# until you uncomment and edit a line.
 
 # Run the /commit step (0 or 1).
 #AICP_DO_COMMIT=1
@@ -17,15 +28,29 @@
 #AICP_LANG=en
 
 # Fallback CLI order — a prefix of the roster (copilot agy codex claude vibe);
-# any roster name left out is appended automatically, in roster order.
+# any roster name left out is appended automatically, in roster order. An
+# unknown or repeated name is refused outright and the default order is used.
 #AICP_CLI_ORDER=copilot agy codex claude vibe
 
-# Per-CLI-call timeout floor / growth / ceiling (seconds).
+# Commit-timestamp display timezone (IANA zone name) and its cosmetic label.
+#AICP_TZ=Asia/Taipei
+#AICP_TZ_LABEL=UTC+8
+
+# Per-CLI-call timeout floor / growth / ceiling (seconds). AICP_STEP_TIMEOUT
+# pins every call to a fixed budget, skipping this formula and the run
+# history below entirely.
+#AICP_STEP_TIMEOUT=
 #AICP_TIMEOUT_BASE=180
 #AICP_TIMEOUT_PER_FILE=15
 #AICP_TIMEOUT_PER_100L=5
 #AICP_TIMEOUT_MAX=1800
 
-# Commit-timestamp display timezone.
-#AICP_TZ=Asia/Taipei
-#AICP_TZ_LABEL=UTC+8
+# How a CLI's own run history may widen its budget past AICP_TIMEOUT_MAX:
+# scan this many recent timing-log rows, and if its largest successful run
+# times this multiplier exceeds the formula above, use that instead.
+#AICP_TIMEOUT_HISTORY_LINES=500
+#AICP_TIMEOUT_HISTORY_MULT=1.3
+
+# Skip the pre-commit secret scan for one run (the escape for a false
+# positive). Best set as a one-shot environment variable, not left on here.
+#AICP_SKIP_SECRET_SCAN=0
