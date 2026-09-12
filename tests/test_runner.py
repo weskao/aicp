@@ -15,13 +15,14 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import textwrap
 import time
 from pathlib import Path
 
 import pytest
 
-from aicp import runner, timing
+from aicp import _utils, runner, timing
 
 POSIX_ONLY = pytest.mark.skipif(
     sys.platform == "win32",
@@ -65,6 +66,35 @@ def called(call_log: Path) -> list[str]:
 
 def outcomes(timing_log: Path) -> list[list[str]]:
     return [line.split("\t") for line in timing_log.read_text().splitlines()]
+
+
+def wait_for(path: Path, timeout: float = 10.0) -> None:
+    """Block until *path* exists — a stub CLI announcing it has really started."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists() and path.read_text().strip():
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"{path} was never written")
+
+
+def pid_is_gone(pid: int, timeout: float = 10.0) -> bool:
+    """Whether *pid* has stopped existing (a signal takes a moment to land).
+
+    Only ever called on a process this test session itself spawned, so the
+    process has already been reaped and the pid cannot be recycled behind us
+    into a false "still alive".
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:  # pragma: no cover - alive, owned by someone else
+            return False
+        time.sleep(0.02)
+    return False
 
 
 def run(prompt="/commit", chain=("copilot", "agy"), **kwargs) -> tuple[int, str]:
@@ -275,6 +305,33 @@ def test_a_hung_cli_is_killed_by_its_budget_and_the_chain_falls_through(
 
 
 @POSIX_ONLY
+def test_a_timed_out_cli_is_actually_killed_not_merely_abandoned(
+    sh_stub, tmp_path, timing_log, monkeypatch
+):
+    """The assertion the "fell through" tests above do NOT make.
+
+    Deleting ``proc.terminate()``, the grace wait and ``proc.kill()`` outright
+    left every other test in this file green: they only check that the chain
+    moved on, which it does either way. The stub records its own pid so this
+    one checks the thing that actually matters — the hung CLI is dead — and
+    the elapsed bound catches the other shape of the same bug, where the
+    runner reaps the child by waiting out its full 30s sleep.
+    """
+    pidfile = tmp_path / "timed-out.pid"
+    sh_stub("copilot", f'echo $$ > "{pidfile}"\nsleep 30\n')
+    sh_stub("agy", "exit 0\n")
+    monkeypatch.setenv("AICP_STEP_TIMEOUT", "1")
+
+    started = time.monotonic()
+    rc, _ = run(chain=("copilot", "agy"))
+    elapsed = time.monotonic() - started
+
+    assert rc == 0
+    assert elapsed < 20, "the runner waited the child out instead of killing it"
+    assert pid_is_gone(int(pidfile.read_text())), "the timed-out CLI is still running"
+
+
+@POSIX_ONLY
 def test_a_timeout_notifies_and_names_the_cli_and_budget(sh_stub, tmp_path, monkeypatch):
     sh_stub("copilot", "sleep 30\n")
     sh_stub("agy", "exit 0\n")
@@ -343,6 +400,126 @@ def test_verbose_streams_child_output_live(sh_stub, capfd):
     assert rc == 0
     assert "live-output" in capfd.readouterr().out
     assert "live-output" not in out
+
+
+# ── the capture log is private, and never a planted symlink ──────────────────
+
+
+@pytest.fixture
+def private_tmpdir(tmp_path, monkeypatch) -> Path:
+    """Point ``tempfile`` at a throwaway directory this test owns.
+
+    ``tempfile.gettempdir()`` caches, so setting ``$TMPDIR`` after the first
+    call would be ignored — the module-level ``tempdir`` is the documented
+    override and the one gettempdir()/mkstemp() both honour.
+    """
+    private = tmp_path / "tmpdir"
+    private.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(private))
+    return private
+
+
+@POSIX_ONLY
+def test_a_symlink_planted_at_the_guessable_capture_path_is_not_followed(
+    sh_stub, private_tmpdir, tmp_path
+):
+    """The live exploit: ``aicp.<pid>.log`` is guessable and ``open(.., "w")``
+    follows a symlink, so anyone who can create a file in a shared /tmp (the
+    sticky bit stops them deleting other people's files, never creating a new
+    name of their own) got the CLI's whole output written over a file of their
+    choosing, with this user's permissions."""
+    victim = tmp_path / "precious.txt"
+    victim.write_text("keep me", encoding="utf-8")
+    (private_tmpdir / f"aicp.{os.getpid()}.log").symlink_to(victim)
+    sh_stub("copilot", "echo output-that-must-not-escape\nexit 1\n")
+
+    run(chain=("copilot",))
+
+    assert victim.read_text(encoding="utf-8") == "keep me"
+
+
+@POSIX_ONLY
+def test_the_capture_log_is_created_private_and_unguessable(sh_stub, private_tmpdir, tmp_path):
+    """Mode 0600 and a random name, checked while the file still exists.
+
+    The stub lists the temp directory from inside the run — run_step deletes
+    the log on the way out, so there is nothing left to stat afterwards.
+    """
+    listing = tmp_path / "listing.txt"
+    sh_stub("copilot", f'ls -l "{private_tmpdir}" > "{listing}"\nexit 1\n')
+
+    run(chain=("copilot",))
+
+    rows = [row for row in listing.read_text().splitlines() if "aicp" in row]
+    assert len(rows) == 1, f"expected exactly one capture log, got: {rows}"
+    assert rows[0].startswith("-rw-------"), f"capture log is not mode 0600: {rows[0]}"
+    assert f"aicp.{os.getpid()}.log" not in rows[0], "the capture-log name is still guessable"
+
+
+def test_verbose_creates_no_capture_log_at_all(stub_cli, private_tmpdir):
+    """Streaming mode captures nothing, so it has no temp file to protect."""
+    stub_cli()
+    assert run(chain=("copilot",), verbose=True)[0] == 0
+    assert list(private_tmpdir.iterdir()) == []
+
+
+# ── no child outlives an unhandled error between spawn and wait ──────────────
+
+
+def _explode_at_communicate(monkeypatch, pidfile: Path, marker: str) -> None:
+    """Make the wait after spawn raise, the way a 309-digit budget does.
+
+    ``AICP_STEP_TIMEOUT`` accepts any digit string, so a .aicprc can pin a
+    budget with no float form at all and ``communicate(timeout=...)`` raises
+    ``OverflowError`` between spawn and wait — an exception path neither
+    ``TimeoutExpired`` nor ``KeyboardInterrupt`` covers.
+
+    Only the spawn whose argv contains *marker* blows up: the budget shells out
+    to git through this same method, and failing that one would abort the run
+    before a CLI is ever started — proving nothing about the child.
+    """
+    real = subprocess.Popen.communicate
+
+    def boom(self, *args, **kwargs):
+        if marker not in str(self.args):
+            return real(self, *args, **kwargs)
+        wait_for(pidfile)  # the child is genuinely running before we blow up
+        raise OverflowError("int too large to convert to float")
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", boom)
+
+
+@POSIX_ONLY
+def test_an_unhandled_error_in_the_runner_leaves_no_child_running(
+    sh_stub, tmp_path, monkeypatch
+):
+    pidfile = tmp_path / "runner-child.pid"
+    sh_stub("copilot", f'echo $$ > "{pidfile}"\nsleep 30\n')
+    _explode_at_communicate(monkeypatch, pidfile, marker="copilot")
+
+    with pytest.raises(OverflowError):
+        run(chain=("copilot",))
+
+    assert pid_is_gone(int(pidfile.read_text())), "the runner leaked a running child"
+
+
+@POSIX_ONLY
+def test_an_unhandled_error_in_run_interruptible_leaves_no_child_running(
+    tmp_path, monkeypatch
+):
+    """Same defect, same shape, the other call site.
+
+    It lives here rather than in test_cross_platform.py because it is one half
+    of the same fix as the test above it — both call sites spawn a child and
+    only ever reaped it on the two exception types they name.
+    """
+    pidfile = tmp_path / "utils-child.pid"
+    _explode_at_communicate(monkeypatch, pidfile, marker=str(pidfile))
+
+    with pytest.raises(OverflowError):
+        _utils.run_interruptible(["/bin/sh", "-c", f'echo $$ > "{pidfile}"; sleep 30'])
+
+    assert pid_is_gone(int(pidfile.read_text())), "run_interruptible leaked a running child"
 
 
 # ── the runner stays decoupled from its siblings ─────────────────────────────

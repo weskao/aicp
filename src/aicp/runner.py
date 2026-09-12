@@ -74,6 +74,16 @@ TIMEOUT_RC = 124  # GNU timeout's own "the command timed out" status
 ABORT_RC = 130    # 128 + SIGINT
 KILL_AFTER = 10   # grace period between SIGTERM and SIGKILL (timeout --kill-after=10)
 
+# Above this, a budget is treated as "no timeout" rather than a deadline. A
+# budget is only ever a digit string out of the environment or .aicprc, so it
+# can be arbitrarily large, and Python cannot wait that long: a 309-digit value
+# has no float form at all (OverflowError converting the timeout), and even a
+# representable one above ~292 years is rejected by the selector the wait runs
+# on (TypeError) — both of them AFTER the child is already spawned. A year is
+# indistinguishable from "never" for one CLI invocation, and this keeps
+# budget.py's stated invariant true: a bad config value never bricks aicp.
+_MAX_DEADLINE = 365 * 24 * 3600
+
 # Per-CLI flags, ported flag-for-flag from _aicp_invoke. Each branch skips MCP
 # server startup where the CLI exposes a way to — /commit and /safe-git-push
 # are plain git prompts, no MCP tool use — which measurably shortens cold start;
@@ -135,12 +145,13 @@ def classify(rc: int, *, timed_out: bool) -> str:
 
 
 def _invoke(
-    argv: list[str], seconds: int, *, cwd: Path | None, capture: Path | None
+    argv: list[str], seconds: int, *, cwd: Path | None, capture: object | None
 ) -> tuple[int, bool]:
     """Run *argv* under a *seconds* budget; returns ``(rc, timed_out)``.
 
     ``seconds <= 0`` means no timeout at all (GNU timeout reads 0 the same
-    way), and takes the bare :func:`~aicp._utils.run_interruptible` path.
+    way), and takes the bare :func:`~aicp._utils.run_interruptible` path; so
+    does a budget above :data:`_MAX_DEADLINE`, for the reason stated there.
 
     The timed path cannot compose with ``run_interruptible``: enforcing a
     deadline needs the ``Popen`` handle (to SIGTERM, then SIGKILL, the child),
@@ -153,15 +164,19 @@ def _invoke(
     kwargs: dict[str, object] = {"cwd": cwd}
     if IS_WINDOWS:
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    if capture is not None:
+        kwargs["stdout"] = capture
+        kwargs["stderr"] = subprocess.STDOUT
 
-    with _capture_to(capture) as handle:
-        if handle is not None:
-            kwargs["stdout"] = handle
-            kwargs["stderr"] = subprocess.STDOUT
-        if seconds <= 0:
-            return normalize_rc(run_interruptible(argv, **kwargs).returncode), False
+    if seconds <= 0 or seconds > _MAX_DEADLINE:
+        return normalize_rc(run_interruptible(argv, **kwargs).returncode), False
 
-        proc = subprocess.Popen(argv, **kwargs)  # type: ignore[arg-type]
+    # `with Popen(...)`, plus a kill on the way out of any exception this
+    # function does not otherwise handle — exactly what subprocess.run does,
+    # and for the same reason: between spawn and wait, ANY escaping exception
+    # (not just the two named below) would otherwise leave a live child with
+    # nobody left to reap it.
+    with subprocess.Popen(argv, **kwargs) as proc:  # type: ignore[arg-type]
         try:
             proc.communicate(timeout=seconds)
         except subprocess.TimeoutExpired:
@@ -188,17 +203,42 @@ def _invoke(
             # group); wait for it to unwind rather than second-guessing it.
             proc.communicate()
             raise
+        except BaseException:
+            proc.kill()
+            raise
         return normalize_rc(proc.returncode), False
 
 
 @contextlib.contextmanager
-def _capture_to(path: Path | None) -> Iterator[object | None]:
-    """A handle for the child's combined output, or None to inherit the screen."""
-    if path is None:
+def _capture_file(enabled: bool) -> Iterator[object | None]:
+    """One reusable handle for the child's combined output, or None to inherit
+    the screen (verbose streams instead of capturing, so it opens nothing).
+
+    ``mkstemp`` rather than a name built from the pid. ``aicp.<pid>.log`` is
+    guessable, and ``open(path, "w")`` follows whatever is already sitting at
+    that name — so on any box whose temp dir is shared (``/tmp`` on Linux and
+    in CI; the sticky bit stops someone deleting another user's file, never
+    creating a new name of their own first) a planted symlink got this user's
+    CLI output written over a file of the attacker's choosing, at mode 0644.
+    ``mkstemp`` opens ``O_EXCL`` at mode 0600: unguessable, unfollowable, and
+    unreadable by anyone else.
+
+    The handle is opened once per run and rewound between CLIs rather than
+    reopened by path, so the name is never resolved a second time.
+    """
+    if not enabled:
         yield None
         return
-    with open(path, "w", encoding="utf-8") as handle:
-        yield handle
+    fd, name = tempfile.mkstemp(prefix="aicp.", suffix=".log")
+    try:
+        # "w+" so _replay can read back what the child wrote through the
+        # inherited fd; errors="replace" because a CLI's output is arbitrary
+        # bytes and a decode error here must never break the run.
+        with os.fdopen(fd, "w+", encoding="utf-8", errors="replace") as handle:
+            yield handle
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(name)
 
 
 def _notify_quietly(notify: NotifyFn, message: str) -> None:
@@ -209,11 +249,12 @@ def _notify_quietly(notify: NotifyFn, message: str) -> None:
         return
 
 
-def _replay(log: Path, out) -> None:
+def _replay(capture, out) -> None:
     """Echo the last 5 lines of a failed CLI's captured output."""
     try:
-        tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-5:]
-    except OSError:
+        capture.seek(0)
+        tail = capture.read().splitlines()[-5:]
+    except (OSError, ValueError):
         return
     for line in tail:
         print(f"    {DIM}{line}{RESET}", file=out)
@@ -235,8 +276,7 @@ def run_step(
     right before whichever CLI is about to run.
     """
     out = stream if stream is not None else sys.stdout
-    log = Path(tempfile.gettempdir()) / f"aicp.{os.getpid()}.log"
-    try:
+    with _capture_file(not verbose) as capture:
         for cli in chain:
             argv = invoke_argv(cli, prompt)
             if argv is None or not have(cli):
@@ -251,9 +291,10 @@ def run_step(
             try:
                 if not verbose:
                     spinner.start()
-                rc, timed_out = _invoke(
-                    argv, allowed.seconds, cwd=cwd, capture=None if verbose else log
-                )
+                if capture is not None:
+                    capture.seek(0)  # this CLI's output only, not the last one's
+                    capture.truncate()
+                rc, timed_out = _invoke(argv, allowed.seconds, cwd=cwd, capture=capture)
             except KeyboardInterrupt:
                 timing.append(cli, prompt, int(time.monotonic() - started), "abort", ABORT_RC)
                 print(
@@ -303,13 +344,8 @@ def run_step(
                 note = t("step_exit_note", "exit %s", rc)
                 print(f"  {RED}✗{RESET} {CYAN}{cli}{RESET}{DIM}  {elapsed}s · {note}{RESET}", file=out)
 
-            if not verbose:
-                _replay(log, out)
+            if capture is not None:
+                _replay(capture, out)
 
         print(f"{RED}" + t("no_cli_for_step", "  ✗ no AI CLI could run this step") + RESET, file=out)
         return 1
-    finally:
-        try:
-            log.unlink()
-        except OSError:
-            pass

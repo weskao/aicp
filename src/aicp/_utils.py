@@ -141,20 +141,23 @@ def run_interruptible(cmd, **kwargs) -> subprocess.CompletedProcess[str]:
     kwargs.setdefault("text", True)
     if IS_WINDOWS:
         kwargs["creationflags"] = kwargs.get("creationflags", 0) | subprocess.CREATE_NEW_PROCESS_GROUP
-        proc = subprocess.Popen(cmd, **kwargs)
-        try:
-            stdout, stderr = proc.communicate()
-        except KeyboardInterrupt:
+        with subprocess.Popen(cmd, **kwargs) as proc:
             try:
-                # CTRL_C_EVENT cannot target a specific process group (Win32
-                # would report success while never actually signaling the
-                # child) — CTRL_BREAK_EVENT is the one that can. See the
-                # module comment above for the full explanation.
-                proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
-            except Exception:  # noqa: BLE001 - CTRL_BREAK_EVENT delivery can fail many ways; fall back to a hard terminate
-                proc.terminate()
-            stdout, stderr = proc.communicate()
-            raise
+                stdout, stderr = proc.communicate()
+            except KeyboardInterrupt:
+                try:
+                    # CTRL_C_EVENT cannot target a specific process group (Win32
+                    # would report success while never actually signaling the
+                    # child) — CTRL_BREAK_EVENT is the one that can. See the
+                    # module comment above for the full explanation.
+                    proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+                except Exception:  # noqa: BLE001 - CTRL_BREAK_EVENT delivery can fail many ways; fall back to a hard terminate
+                    proc.terminate()
+                stdout, stderr = proc.communicate()
+                raise
+            except BaseException:
+                proc.kill()
+                raise
         return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
     # POSIX: start_new_session=False (the default) keeps the child in this
@@ -162,12 +165,19 @@ def run_interruptible(cmd, **kwargs) -> subprocess.CompletedProcess[str]:
     # terminal's SIGINT (delivered to the whole foreground process group)
     # reaches the child the same way it would with no wrapper at all. This is
     # the direct equivalent of GNU `timeout --foreground`.
-    proc = subprocess.Popen(cmd, **kwargs)
-    try:
-        stdout, stderr = proc.communicate()
-    except KeyboardInterrupt:
-        # The child already received the same SIGINT (same process group);
-        # wait for it to unwind rather than second-guessing it with a kill.
-        stdout, stderr = proc.communicate()
-        raise
+    # `with Popen(...)` plus a kill on any unhandled exception, the way
+    # subprocess.run itself does it: between spawn and wait, anything escaping
+    # that is NOT the interrupt handled below would otherwise leave a live
+    # child behind with nobody left to reap it.
+    with subprocess.Popen(cmd, **kwargs) as proc:
+        try:
+            stdout, stderr = proc.communicate()
+        except KeyboardInterrupt:
+            # The child already received the same SIGINT (same process group);
+            # wait for it to unwind rather than second-guessing it with a kill.
+            stdout, stderr = proc.communicate()
+            raise
+        except BaseException:
+            proc.kill()
+            raise
     return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
