@@ -195,7 +195,7 @@ def test_neither_row_blocks_on_non_tty_stdin(menu, codex_foreign, row):
 
 def test_both_actions_render_in_the_language_just_picked(menu, codex_foreign, monkeypatch):
     """Row 3 switches to zh-TW mid-session, so every string these two rows
-    print is formatted from the ``_ZH`` bridge — a translation whose ``%s``
+    print is formatted from ``i18n.CATALOG`` — a translation whose ``%s``
     count does not match its English original raises right here."""
     monkeypatch.setattr("aicp.menu.timeout_bin", lambda: None)
     code, out, _ = menu(f"3\n{SKILLS_ROW}\nn\nn\n{DOCTOR_ROW}\nq\n")

@@ -67,96 +67,17 @@ __all__ = ["ROWS", "MenuState", "Row", "config_menu", "swap_ai"]
 
 _ROSTER_NAMES: tuple[str, ...] = tuple(c.name for c in ROSTER)
 
-# zh-TW for this module's own msgids. A bridge, not a second catalogue:
-# :func:`_t` consults ``i18n.CATALOG`` FIRST, so when the task that fills the
-# shared catalogue lands, its entries win and these become dead weight to
-# delete. House style follows bin/aicp: fullwidth ：，（）, a half-width space
-# around embedded Latin runs, command nouns left untranslated.
-_ZH: dict[str, str] = {
-    "config_title": "aicp 設定",
-    "config_group_steps": "步驟",
-    "config_group_general": "一般",
-    "config_do_commit": "執行 /commit 步驟",
-    "config_do_push": "執行 /safe-git-push 步驟",
-    "config_language": "語言",
-    "config_cli_first": "第一個 AI CLI",
-    "config_on": "開",
-    "config_off": "關",
-    "config_help_commit": "關：完全不 stage 或 commit — 只推送已經 commit 的內容。",
-    "config_help_push": "關：commit 後就停下，分支會領先遠端。",
-    "config_help_lang": "所有訊息的語言，包含 Telegram 通知。",
-    "config_help_cli": "優先嘗試；其餘維持原本順序。沒安裝的會自動略過。",
-    "config_keys_plain": "1-%s 變更 · q 離開 · 隨改隨存",
-    "config_keys": "↑↓ 選擇 · ←→ 變更 · ⏎ 切換 · q 離開 · 隨改隨存",
-    "config_prompt": "請選擇要變更的設定（1-%s，q 離開）：",
-    "config_bad_number": "⚠ 請輸入上面列出的設定編號。",
-    "persist_failed": "✗ 寫入 %s 失敗",
-    "swap_current_order": "目前的 fallback 順序：",
-    "swap_current_first": "  ← 目前的 #1",
-    "swap_prompt": "請選擇要移到 #1 的 CLI（1-%s）：",
-    "swap_invalid": "✗ 無效的選擇：%s",
-    "swap_already_first": "▸ %s 已經是 #1 — 不需變更",
-    "swap_new_order": "✓ 新的順序：",
-    "swap_saved": "  已儲存到 %s — 下一次 aicp 就會採用",
-    "config_skills": "Skills",
-    "config_doctor": "健康檢查",
-    "config_help_skills": "把 aicp 的 /commit 與 /safe-git-push 裝進每個 AI CLI。你自己的同名檔案一律保留。",
-    "config_help_doctor": "檢查平常不會出聲的問題：timeout、.aicprc 被略過的行、skills、git remote。",
-    "skills_none": "沒有已設定的 CLI",
-    "skills_missing": "⚠ %s 缺少",
-    "skills_older": "⚠ %s 需更新",
-    "skills_yours": "✓ 保留你自己的",
-    "skills_ok": "✓ 已安裝",
-    "skills_title": "Skills",
-    "skills_skipped": "沒有安裝：%s",
-    "config_group_tools": "工具",
-    "skills_state_missing": "尚未安裝",
-    "skills_state_current": "已安裝（%s）",
-    "skills_state_older": "來自舊版 aicp（%s）— 可以更新",
-    "skills_state_foreign": "你自己的檔案 — aicp 會直接沿用",
-    "skills_install_q": "要安裝／更新這 %s 個 skill 嗎？（y／N）：",
-    "skills_keep_note": "保留你自己的 %s 個 skill — aicp 會直接沿用，這不是錯誤。",
-    "skills_force_q": "要改用 aicp 的版本嗎？你的檔案會先備份（y／N）：",
-    "skills_installed": "%s 已安裝到 %s",
-    "skills_upgraded": "%s 已為 %s 更新",
-    "skills_overwritten": "%s 已為 %s 換成 aicp 的版本 — 你的原檔在 %s",
-    "skills_kept": "%s：保留你自己的版本 — aicp 會直接沿用",
-    "skills_nothing": "沒有需要處理的項目。",
-    "doctor_clear": "✓ 一切正常",
-    "doctor_one": "⚠ 1 項提醒",
-    "doctor_many": "⚠ %s 項提醒",
-    "health_title": "健康檢查",
-    "health_footer": "提醒只是讓你知道，不是失敗 — aicp 照樣可以跑。",
-    "health_timeout_ok": "每次 CLI 呼叫的 timeout 用 %s",
-    "health_timeout_missing": "PATH 上沒有 timeout／gtimeout — 每次 AI CLI 呼叫都沒有時間上限",
-    "health_no_config": "還沒有 %s — 全部採用內建預設值",
-    "health_config_ok": "%s：讀到 %s 個設定",
-    "health_env_only": "%s 在 %s 裡會被忽略 — 這個項目只能從環境變數／PATH 取得",
-    "health_dropped": "%s 被 %s 略過 — 值裡有不允許的字元",
-    "health_skills_none": "找不到任何 AI CLI 的設定目錄 — 沒有地方可以安裝 skills",
-    "health_skill_missing": "%s：%s skill 尚未安裝 — 用 Skills 那一列安裝",
-    "health_skill_older": "%s：%s skill 來自舊版 aicp — 用 Skills 那一列更新",
-    "health_skill_foreign": "%s：%s skill 是你自己的 — aicp 會直接沿用",
-    "health_skills_ok": "所有已設定的 CLI 都有 skills",
-    "health_no_branch": "目前不在分支上（detached HEAD 或不是 git repo）— aicp 需要分支才能 push",
-    "health_no_remote": "這個 repo 沒有 git remote — 可以 commit，但沒有地方 push",
-    "health_git_ok": "分支 %s → remote %s",
-}
-
 
 def _t(lang: str, msgid: str, english: str, *args: object) -> str:
-    """Translate for *lang*, chosen per call rather than at import.
+    """:func:`aicp.i18n.t` with the language passed in rather than resolved.
 
     ``i18n.t`` resolves ``AICP_LANG`` once at import time, which is right for
     a one-shot run and wrong here: the language row has to repaint the menu
     in the language just picked, in the same process, before anything else
-    happens. Lookup order is the shared catalogue first, this module's bridge
-    second, the English at the call site last — a missing msgid degrades to
-    English, never to a blank line.
+    happens. Same catalogue, same fallback — a missing msgid degrades to the
+    English at the call site, never to a blank line.
     """
-    text = english
-    if lang != "en":
-        text = i18n.CATALOG.get(msgid) or _ZH.get(msgid, english)
+    text = i18n.CATALOG.get(msgid, english) if lang != "en" else english
     return text % args if args else text
 
 
@@ -337,7 +258,9 @@ def _skills_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
         skills.FOREIGN: (_OK, GREEN, "skills_state_foreign", "your own file — aicp will use it"),
     }
     print(file=out)
-    print(_t(state.lang, "skills_title", "Skills"), file=out)
+    # The Skills row's own label, on purpose: one word, one msgid. A second id
+    # for the same English is how a report and the row it belongs to drift.
+    print(_t(state.lang, "config_skills", "Skills"), file=out)
     for status in live:
         if status.state == skills.CURRENT:
             mark, color, text = _OK, GREEN, _t(state.lang, "skills_state_current", "installed (%s)", status.version)
@@ -532,7 +455,7 @@ def _doctor_action(state: MenuState, _stdin: IO[str], out: IO[str]) -> None:
     """Print the report. Asks nothing, so there is nothing to block on."""
     lines = _health(state)
     print(file=out)
-    print(_t(state.lang, "health_title", "Health check"), file=out)
+    print(_t(state.lang, "config_doctor", "Health check"), file=out)  # the row's own label
     for mark, text in lines:
         print(f"  {YELLOW if mark == _WARN else GREEN}{mark}{RESET} {text}", file=out)
     if any(mark == _WARN for mark, _ in lines):

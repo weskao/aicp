@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ._utils import BOLD, DIM, RESET
+from .i18n import t
 
 __all__ = [
     "Spinner",
@@ -175,7 +176,9 @@ def spinner_capture(
 FRAME = "\033[38;5;240m"
 HEADER = "\033[48;5;238;38;5;255m"
 STRIPE = "\033[48;5;235;38;5;252m"
-VALUE_HEADER = "VALUE"
+# Resolved at import like every other message: the column widths below are
+# measured from it, and a table cannot re-measure itself mid-run.
+VALUE_HEADER = t("panel_value_header", "VALUE")
 
 _ANSI = re.compile(r"\033\[[0-9;]*m")
 

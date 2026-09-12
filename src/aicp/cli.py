@@ -187,7 +187,10 @@ class _Parser(argparse.ArgumentParser):
 def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="aicp",
-        description="AI commit + push, with a git-verified result summary.",
+        # argparse's own furniture ("usage:", "options:", -h's text) stays in
+        # English: it is argparse's, not aicp's, and gettext-patching a stdlib
+        # module to translate four words is not worth the surprise.
+        description=t("help_description", "AI commit + push, with a git-verified result summary."),
         # No abbreviation matching: `--conf` must not silently become
         # `--config` (which runs the settings menu instead of a commit).
         allow_abbrev=False,
@@ -195,37 +198,40 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"aicp {__version__}")
     parser.add_argument(
         "-v", "--verbose", action="store_true",
-        help="stream each CLI's output live instead of a spinner",
+        help=t("help_verbose", "stream each CLI's output live instead of a spinner"),
     )
     parser.add_argument(
         "--undo", action="store_true",
-        help="undo the last commit (git reset --soft HEAD^); refuses once it is "
-             "on the remote. Runs no AI CLI",
+        help=t(
+            "help_undo",
+            "undo the last commit (git reset --soft HEAD^); refuses once it is "
+            "on the remote. Runs no AI CLI",
+        ),
     )
     parser.add_argument(
         "--swap-ai", action="store_true",
-        help="move a CLI to #1 in the fallback chain and save it to .aicprc",
+        help=t("help_swap_ai", "move a CLI to #1 in the fallback chain and save it to .aicprc"),
     )
     parser.add_argument(
         "--config", action="store_true",
-        help="settings menu: the two steps, the language, the leading CLI",
+        help=t("help_config", "settings menu: the two steps, the language, the leading CLI"),
     )
     parser.add_argument(
         "--doctor", action="store_true",
-        help="report where each vendored skill stands for each CLI",
+        help=t("help_doctor", "report where each vendored skill stands for each CLI"),
     )
-    parser.add_argument("--json", action="store_true", help="--doctor as JSON")
+    parser.add_argument("--json", action="store_true", help=t("help_json", "--doctor as JSON"))
     parser.add_argument(
         "--install-skills", action="store_true",
-        help="install the vendored skills into every configured CLI",
+        help=t("help_install_skills", "install the vendored skills into every configured CLI"),
     )
     parser.add_argument(
         "--yes", action="store_true",
-        help="--install-skills: actually write (without it, only a preview)",
+        help=t("help_yes", "--install-skills: actually write (without it, only a preview)"),
     )
     parser.add_argument(
         "--force", action="store_true",
-        help="--install-skills: replace a foreign file, keeping a .bak",
+        help=t("help_force", "--install-skills: replace a foreign file, keeping a .bak"),
     )
     return parser
 
@@ -431,9 +437,11 @@ def _report(summary: gitflow.ResultSummary, repo: str, remote: str, branch: str)
         + "\n\n"
         + f'| {t("tg_tbl_item", "Item")} | {t("tg_tbl_value", "Value")} |\n'
         + "| --- | --- |\n"
-        + f'| {t("tg_tbl_new_commits", "New commits")} | {summary.created} |\n'
-        + f'| {t("tg_tbl_ahead", "Ahead")} | {summary.ahead} |\n'
-        + f'| {t("tg_tbl_behind", "Behind")} | {summary.behind} |\n\n'
+        # Same three labels as the RESULT table, so the same msgids: the
+        # Telegram row and the terminal row must never read differently.
+        + f'| {t("result_new_commits", "New commits")} | {summary.created} |\n'
+        + f'| {t("result_ahead", "Ahead")} | {summary.ahead} |\n'
+        + f'| {t("result_behind", "Behind")} | {summary.behind} |\n\n'
         + local_title
         + "\n"
         + "\n".join(local)
