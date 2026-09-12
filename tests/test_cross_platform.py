@@ -3,8 +3,8 @@
 Covers platform-flag correctness and ``run_interruptible``'s two code paths —
 the POSIX path (real assertions, run on every OS this suite executes on
 except Windows) and the Windows path (skipped everywhere but Windows: it
-depends on ``CREATE_NEW_PROCESS_GROUP``/``CTRL_C_EVENT``, which don't exist
-off Windows).
+depends on ``CREATE_NEW_PROCESS_GROUP``/``CTRL_BREAK_EVENT``, which don't
+exist off Windows).
 """
 
 from __future__ import annotations
@@ -14,8 +14,9 @@ import subprocess
 import sys
 
 import pytest
+from conftest import ALL_CLIS
 
-from aicp import _utils
+from aicp import _utils, contracts
 
 # ── platform flags ───────────────────────────────────────────────────────────
 
@@ -26,6 +27,16 @@ def test_platform_flags_match_sys_platform():
     assert _utils.IS_LINUX == sys.platform.startswith("linux")
     # Exactly one of the three is ever true on a supported CI runner.
     assert sum([_utils.IS_WINDOWS, _utils.IS_MACOS, _utils.IS_LINUX]) == 1
+
+
+def test_stub_cli_roster_matches_contracts_roster():
+    """conftest.py's ``ALL_CLIS`` (which every ``stub_cli`` fixture stubs) must
+    stay a superset of ``contracts.ROSTER`` — if the frozen roster ever grows
+    a 6th CLI (see TODO.md §6, "grok") and this list isn't updated too, a
+    test could silently fall through to a REAL CLI actually installed on the
+    machine running the suite, exactly the failure mode ``test_aicp.sh``'s
+    own harness comment warns about."""
+    assert {cli.name for cli in contracts.ROSTER} <= set(ALL_CLIS)
 
 
 def test_have_finds_the_running_interpreter():

@@ -129,7 +129,15 @@ exit {exit_code}
 """
 
 _CMD_STUB = """@echo off
->> "{call_log}" echo {cli}	%*
+setlocal
+set "line={cli}"
+:aicp_stub_loop
+if "%~1"=="" goto :aicp_stub_done
+set "line=%line%	%~1"
+shift
+goto :aicp_stub_loop
+:aicp_stub_done
+>> "{call_log}" echo %line%
 exit /b {exit_code}
 """
 
@@ -145,8 +153,9 @@ def stub_cli(tmp_path, call_log, monkeypatch):
     """Factory: install fake executables for AI CLI binary names onto PATH.
 
     ``stub_cli()`` (defaults) stubs all 5 :data:`ALL_CLIS` names, each
-    exiting 0 and appending one TAB-separated line — ``<cli>\\t<argv0>\\t
-    <argv1>\\t...`` — to :func:`call_log` per invocation. Every fallback name
+    exiting 0 and appending one TAB-separated line — ``<cli>\\t<arg1>\\t
+    <arg2>\\t...`` (the CLI's own arguments, not argv[0]/the program name
+    itself) — to :func:`call_log` per invocation. Every fallback name
     is stubbed, not just the one a test expects to be tried first: a repo
     state that makes the chain skip past the first CLI must never fall
     through to a real CLI actually installed on the machine running the

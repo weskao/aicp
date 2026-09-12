@@ -10,6 +10,7 @@ each ships its own copy (same posture the zsh original documents for
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -79,8 +80,6 @@ def color_supported(stream=None) -> bool:
 
 def have(cmd: str) -> bool:
     """True if *cmd* resolves to an executable on PATH."""
-    import shutil
-
     return shutil.which(cmd) is not None
 
 
@@ -110,15 +109,23 @@ def home_config_dir(env_var: str, default: Path) -> Path:
 #            achieves), so Ctrl+C at the terminal reaches it directly, same as
 #            if it had been run with no wrapper at all.
 #   Windows  there is no equivalent "foreground process group" concept.
-#            CREATE_NEW_PROCESS_GROUP lets this process send CTRL_C_EVENT to
-#            the child WITHOUT also killing itself (plain Ctrl+C on Windows
-#            targets every process attached to the same console) — but that
-#            means the child does NOT receive the console's own Ctrl+C
-#            directly; the caller must catch KeyboardInterrupt and forward
-#            CTRL_C_EVENT itself. This is an honest limitation, not a full
-#            port of the POSIX behavior: a child that ignores CTRL_C_EVENT (or
-#            is a console subsystem app that doesn't install a handler) will
-#            not stop, and there is no equivalent of --foreground's direct
+#            CREATE_NEW_PROCESS_GROUP lets this process forward an interrupt to
+#            just the child WITHOUT also killing itself (plain Ctrl+C on
+#            Windows targets every process attached to the same console) — but
+#            that means the child does NOT receive the console's own Ctrl+C
+#            directly; the caller must catch KeyboardInterrupt and forward the
+#            event itself. The event sent is CTRL_BREAK_EVENT, not
+#            CTRL_C_EVENT: Win32's GenerateConsoleCtrlEvent (what
+#            Popen.send_signal calls under the hood) documents that
+#            CTRL_C_EVENT CANNOT target a specific, non-zero process group —
+#            the call reports success but the child is never actually
+#            signaled — while CTRL_BREAK_EVENT can. This is an honest
+#            limitation, not a full port of the POSIX behavior: a child that
+#            ignores CTRL_BREAK_EVENT (or is a console subsystem app with no
+#            handler installed), or that treats CTRL_BREAK as an unconditional
+#            kill rather than a graceful one (a real difference from Ctrl+C,
+#            which most well-behaved CLIs treat as cancellable), will not stop
+#            cleanly, and there is no equivalent of --foreground's direct
 #            delivery. Callers on Windows needing a hard kill should follow up
 #            with Popen.terminate()/kill() rather than assume the event lands.
 def run_interruptible(cmd, **kwargs) -> subprocess.CompletedProcess[str]:
@@ -139,8 +146,12 @@ def run_interruptible(cmd, **kwargs) -> subprocess.CompletedProcess[str]:
             stdout, stderr = proc.communicate()
         except KeyboardInterrupt:
             try:
-                proc.send_signal(signal.CTRL_C_EVENT)  # type: ignore[attr-defined]
-            except Exception:  # noqa: BLE001 - CTRL_C_EVENT delivery can fail many ways; fall back to a hard terminate
+                # CTRL_C_EVENT cannot target a specific process group (Win32
+                # would report success while never actually signaling the
+                # child) — CTRL_BREAK_EVENT is the one that can. See the
+                # module comment above for the full explanation.
+                proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001 - CTRL_BREAK_EVENT delivery can fail many ways; fall back to a hard terminate
                 proc.terminate()
             stdout, stderr = proc.communicate()
             raise
