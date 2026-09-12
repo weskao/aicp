@@ -60,3 +60,23 @@ jobs:
               )
               suffix = ".exe" if os.name == "nt" else ""
               subprocess.run([scripts / f"aicp{suffix}", "--help"], check=True)
+
+              # The vendored skills must survive packaging. Without the
+              # force-include key in pyproject.toml the wheel ships no skill
+              # data, _vendor_dir() falls back to a checkout path that does not
+              # exist once installed, and installing skills silently finds
+              # nothing. Assert against the INSTALLED package, never the checkout.
+              subprocess.run(
+                  [
+                      python,
+                      "-c",
+                      "from aicp import skills;"
+                      "d = skills.VENDOR_DIR;"
+                      "assert d.is_dir(), f'no vendored skills in wheel: {d}';"
+                      "assert (d / 'commit.md').is_file(), 'commit.md missing';"
+                      "assert (d / 'safe-git-push' / 'SKILL.md').is_file(),"
+                      " 'safe-git-push missing';"
+                      "print('vendored skills OK:', d)",
+                  ],
+                  check=True,
+              )
