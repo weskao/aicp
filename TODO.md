@@ -93,3 +93,24 @@ though it will exhaust again for the rest of the same run. Add:
   coverage at all** (verified: `grep` finds neither in the suite) — the subset
   rule in §3 is a behaviour change to an untested code path, so it gets tests
   now rather than later.
+
+---
+
+## Known defect — Windows timeout orphans the CLI (HIGH, open)
+
+Found during the Windows CI fix (2026-09-13), documented in `runner.py`'s
+docstring, deliberately not fixed in that task.
+
+On Windows an npm-installed CLI is a `.cmd` shim, so `_launch_command` runs it
+through `%ComSpec%`. That puts an intermediate `cmd.exe` between aicp and the
+CLI — and on the budget-timeout path `proc.terminate()` / `proc.kill()` then
+hits `cmd.exe`, **not the CLI behind it**. The CLI is orphaned rather than
+killed, which contradicts this module's stated "killed by its own budget"
+invariant. POSIX is unaffected (no interpreter in between), and the Ctrl+C
+path is unaffected on both (`CTRL_BREAK_EVENT` targets the whole group).
+
+A correct fix needs Windows process-tree killing — `taskkill /T /F` or a Job
+Object — plus a Windows-only test that spawns a live grandchild and asserts it
+is gone. It was left out of the CI-fix task because neither can be verified
+without a Windows host, and the risk of destabilising a just-turned-green CI
+outweighed shipping it unverified.
