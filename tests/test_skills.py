@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import builtins
 import json
-import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -399,7 +398,15 @@ def test_probe_ignores_foreign_content(configured):
 
 def test_probe_performs_no_file_reads_and_few_stats(configured, monkeypatch):
     """AC: the hot-path probe reads no files. Verified by making every read
-    path raise, and by counting the os.stat calls it makes."""
+    path raise, and by counting the stats it makes.
+
+    ``Path.stat``, not ``os.stat``: on 3.10 ``pathlib`` binds ``os.stat`` into
+    its ``_NormalAccessor`` at import time, so patching the ``os`` attribute is
+    never observed and the count is a silent 0 (``_Accessor`` was removed in
+    3.11, which is why only 3.10 saw it). ``Path.stat`` is what the probe
+    actually reaches — ``is_dir``/``exists`` both route through it — on every
+    supported version, so this counts behavior rather than a pathlib internal.
+    """
     h = configured("codex")
     skills.install([cli("codex")], home=h)
 
@@ -407,17 +414,17 @@ def test_probe_performs_no_file_reads_and_few_stats(configured, monkeypatch):
         raise AssertionError("hot-path probe opened/read a file")
 
     stats: list[object] = []
-    real_stat = os.stat
+    real_stat = Path.stat
 
-    def _counting_stat(*args, **kwargs):
-        stats.append(args[0] if args else None)
-        return real_stat(*args, **kwargs)
+    def _counting_stat(self, *args, **kwargs):
+        stats.append(self)
+        return real_stat(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", _no_reads)
     monkeypatch.setattr(Path, "read_bytes", _no_reads)
     monkeypatch.setattr(Path, "open", _no_reads)
     monkeypatch.setattr(builtins, "open", _no_reads)
-    monkeypatch.setattr(os, "stat", _counting_stat)
+    monkeypatch.setattr(Path, "stat", _counting_stat)
 
     assert skills.missing_skills(cli("codex"), home=h) == ()
 

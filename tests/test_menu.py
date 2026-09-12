@@ -295,6 +295,28 @@ def test_is_interactive_is_false_for_a_pipe():
     assert is_interactive(io.StringIO(), io.StringIO()) is False
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX termios path")
+def test_non_tty_fallback_is_taken_on_a_real_pipe_fd():
+    """The ``is_interactive`` guard is what saves this case — not the ``except``.
+
+    Every other non-TTY test here feeds a ``StringIO``, whose ``fileno()``
+    raises ``UnsupportedOperation``: a subclass of ``OSError``/``ValueError``,
+    so ``read_key``'s ``except`` clause silently stands in for the guard and
+    such a test cannot tell the two apart. A real pipe has a working
+    ``fileno()``, and ``termios.tcgetattr`` on it raises ``termios.error``,
+    whose MRO is ``(error, Exception)`` — NOT caught by
+    ``except (OSError, ValueError, ImportError)``. This is therefore the only
+    shape that actually fails if the guard is removed.
+    """
+    read_fd, write_fd = os.pipe()
+    with os.fdopen(write_fd, "w") as writer, os.fdopen(read_fd, "r") as stream:
+        writer.write("down\n")
+        writer.flush()
+        stream.fileno()  # a real fd, unlike StringIO — no shortcut to the except
+        assert stream.isatty() is False
+        assert read_key(stream, stream) == "down"
+
+
 # ── row model: a later task appends Skills and Doctor rows ───────────────────
 
 
