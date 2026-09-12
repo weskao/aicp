@@ -137,6 +137,149 @@ def test_an_unknown_cli_name_has_no_invocation():
     assert runner.invoke_argv("not-a-cli", "/commit") is None
 
 
+# ── launching what invoke_argv named (Windows batch shims) ───────────────────
+#
+# invoke_argv keeps argv[0] a BARE name (the assertions above pin that), which
+# only POSIX can launch. Windows CreateProcess ignores %PATHEXT% and cannot run
+# a batch file at all, so every npm-installed CLI — all five of them — died with
+# WinError 2 before these tests existed. _launch_command is the seam that fixes
+# it, and it is checked on every OS by faking the platform, because the bug is
+# invisible on the two platforms most of this suite runs on.
+
+WINDOWS_ONLY = pytest.mark.skipif(
+    sys.platform != "win32", reason="Windows batch-shim launching"
+)
+
+
+@pytest.fixture
+def fake_windows(monkeypatch):
+    """Pretend to be Windows, with a resolver this test controls.
+
+    ``shutil.which`` is what tells _launch_command the real extension, so the
+    fake is the whole point: it decides whether the resolved target looks like
+    a .exe or an npm .cmd shim.
+    """
+
+    def _resolve(resolved: str | None):
+        monkeypatch.setattr(runner, "IS_WINDOWS", True)
+        monkeypatch.setattr(runner.shutil, "which", lambda _name: resolved)
+
+    return _resolve
+
+
+def test_launch_command_is_a_passthrough_off_windows():
+    argv = ["copilot", "-p", "/commit", "--allow-all"]
+    assert runner._launch_command(argv) is argv
+
+
+def test_launch_command_resolves_a_real_exe_to_its_full_path(fake_windows):
+    """Not cosmetic: a bare name sends CreateProcess looking in the CURRENT
+    DIRECTORY before the system directories, so a ``copilot.exe`` dropped in
+    the repo being committed would win over the installed one."""
+    fake_windows(r"C:\tools\copilot.exe")
+    assert runner._launch_command(["copilot", "-p", "/commit"]) == [
+        r"C:\tools\copilot.exe",
+        "-p",
+        "/commit",
+    ]
+
+
+def test_launch_command_runs_a_batch_shim_through_a_named_interpreter(
+    fake_windows, monkeypatch
+):
+    """The actual WinError 2 fix: a .cmd needs cmd.exe, named explicitly.
+
+    ``shell=True`` would do this too and is exactly what the project bans — it
+    would hand cmd.exe the whole line to re-split. Here the interpreter is an
+    absolute path from %ComSpec%, /d blocks the registry AutoRun command, /s
+    pins cmd's quote handling to its one predictable rule, and every argument
+    is individually quoted.
+    """
+    monkeypatch.setenv("ComSpec", r"C:\Windows\System32\cmd.exe")
+    fake_windows(r"C:\Users\me\AppData\Roaming\npm\copilot.cmd")
+
+    line = runner._launch_command(["copilot", "-p", "/commit", "--allow-all"])
+
+    assert line == (
+        r'"C:\Windows\System32\cmd.exe" /d /s /c '
+        r'""C:\Users\me\AppData\Roaming\npm\copilot.cmd" "-p" "/commit" "--allow-all""'
+    )
+
+
+def test_launch_command_falls_back_to_system32_when_comspec_is_unset(
+    fake_windows, monkeypatch
+):
+    monkeypatch.delenv("ComSpec", raising=False)
+    monkeypatch.setenv("SystemRoot", r"C:\Windows")
+    fake_windows(r"C:\npm\copilot.cmd")
+    assert runner._launch_command(["copilot"]).startswith(
+        r'"C:\Windows\System32\cmd.exe" /d /s /c '
+    )
+
+
+@pytest.mark.parametrize("hostile", ['/commit"', "/commit%PATH%", "/com\rmit"])
+def test_launch_command_refuses_an_argument_cmd_would_interpret(fake_windows, hostile):
+    """Quoting each argument neutralizes cmd's metacharacters except these two:
+    a quote ends the quoting, and %VAR% expands inside quotes too. Neither has
+    a sound escape on a cmd command line, so the launch refuses instead of
+    pretending — the shell-injection surface the project bans, closed shut.
+    """
+    fake_windows(r"C:\npm\copilot.cmd")
+    with pytest.raises(ValueError, match="cmd.exe"):
+        runner._launch_command(["copilot", "-p", hostile])
+
+
+def test_a_batch_shim_is_never_launched_through_a_shell():
+    """``shell=True`` would make the per-argument quoting above pointless.
+
+    Asserted against the AST, not with a substring search: runner.py names
+    ``shell=True`` in prose precisely to explain why it does not use it, and a
+    grep cannot tell an explanation from a call.
+    """
+    tree = ast.parse(Path(runner.__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for keyword in node.keywords:
+            assert not (
+                keyword.arg == "shell" and getattr(keyword.value, "value", False) is True
+            ), f"runner.py builds a shell command line at line {node.lineno}"
+
+
+@WINDOWS_ONLY
+def test_a_batch_shim_with_spaces_everywhere_still_gets_its_arguments(
+    tmp_path, call_log, monkeypatch, timing_log
+):
+    r"""The case the /s switch exists for, end to end on a real cmd.exe.
+
+    Without /s, cmd applies a five-condition rule to the quotes on the line and
+    falls back to "strip the first quote and the last one" as soon as more than
+    one argument is quoted — which is the moment an install path with a space
+    (``C:\Program Files\nodejs``) meets a prompt with a space. The line is then
+    silently re-cut in the wrong places and the CLI is handed garbage.
+    """
+    bin_dir = tmp_path / "stub bin"
+    bin_dir.mkdir()
+    from conftest import _CMD_STUB
+
+    (bin_dir / "copilot.cmd").write_text(
+        _CMD_STUB.format(cli="copilot", call_log=call_log, exit_code=0)
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    rc, _ = run(prompt="fix the flaky test", chain=("copilot",))
+
+    assert rc == 0
+    assert call_log.read_text().splitlines()[0].split("\t") == [
+        "copilot",
+        "-p",
+        "fix the flaky test",
+        "--allow-all",
+        "--disable-builtin-mcps",
+        "--no-auto-update",
+    ]
+
+
 # ── outcome buckets ──────────────────────────────────────────────────────────
 
 

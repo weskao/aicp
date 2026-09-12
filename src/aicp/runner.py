@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -122,6 +123,81 @@ def invoke_argv(cli: str, prompt: str) -> list[str] | None:
     return None if flags is None else [cli, "-p", prompt, *flags]
 
 
+# ── Windows: launching an npm shim ───────────────────────────────────────────
+#
+# `invoke_argv` builds argv[0] as the BARE binary name, which is all POSIX
+# needs. On Windows it was unlaunchable. CreateProcess (what subprocess uses
+# when shell=False) does not consult %PATHEXT%: given "copilot" it looks for
+# "copilot.exe" and nothing else, and it cannot execute a batch file even when
+# handed one, because a .cmd is a script that only cmd.exe can interpret.
+#
+# Every one of aicp's five CLIs is npm-installed, and npm's Windows shim is a
+# .cmd — so `Popen(["copilot", ...])` raised `FileNotFoundError: [WinError 2]`
+# on every Windows machine. `have()` could not catch it: shutil.which DOES
+# honor %PATHEXT%, so the gate said the CLI was present and the very next line
+# failed to start it. aicp on Windows could therefore never run a single step;
+# a user would have seen every CLI in the chain die instantly and the run end
+# with "✗ no AI CLI could run this step" despite the CLIs being installed.
+#
+# The fix resolves the binary once, so its real extension is known, and hands a
+# batch shim to the interpreter that can run it. Deliberately NOT shell=True:
+# that would build one string out of the whole command and hand cmd.exe a
+# shell-injection surface the project bans. Here the interpreter is named
+# explicitly, argv stays a list, and the arguments are individually quoted.
+_BATCH_SUFFIXES = frozenset({".cmd", ".bat"})
+
+# cmd.exe re-parses whatever command line it is given, and quoting each argument
+# neutralizes every metacharacter except these: `"` ends the quoting, and `%`
+# is expanded inside quotes too. There is no sound, portable escape for either
+# one on a cmd command line, so a launch carrying them is refused rather than
+# half-escaped. aicp never builds one — prompts are slash-command names and the
+# flags are fixed literals in _FLAGS — so this is a tripwire, not a limit
+# anyone meets.
+# ponytail: fail closed; write a real cmd quoter only if aicp ever has to pass
+# arbitrary free text as a prompt on Windows.
+_CMD_UNSAFE = frozenset('"%\r\n\x00')
+
+
+def _launch_command(argv: list[str]) -> list[str] | str:
+    """*argv* rewritten so this platform can actually start it.
+
+    Returns *argv* unchanged off Windows. On Windows, returns the resolved
+    executable (so CreateProcess does no PATH search of its own), or — for a
+    .cmd/.bat shim — a full ``cmd.exe /d /s /c "..."`` command line as a single
+    string, which is how the quoting below survives being handed on verbatim.
+    """
+    if not IS_WINDOWS:
+        return argv
+
+    resolved = shutil.which(argv[0])
+    if resolved is None:  # pragma: no cover - run_step gates on have() first
+        return argv
+    if os.path.splitext(resolved)[1].lower() not in _BATCH_SUFFIXES:
+        return [resolved, *argv[1:]]
+
+    parts = [resolved, *argv[1:]]
+    bad = sorted({c for part in parts for c in part if c in _CMD_UNSAFE})
+    if bad:
+        raise ValueError(
+            f"refusing to run {argv[0]} through cmd.exe: an argument contains "
+            f"{''.join(bad)!r}, which cmd.exe would interpret rather than pass on"
+        )
+    # %ComSpec% is how Windows itself names the interpreter; the literal path is
+    # only a floor for a stripped environment. /d skips the registry AutoRun
+    # command, so a machine-wide AutoRun cannot inject itself into every aicp
+    # step. /s makes cmd's quote handling the ONE predictable rule — strip the
+    # outer pair, take the rest verbatim — instead of the five-condition dance
+    # it otherwise does, which mangles the line as soon as two arguments happen
+    # to be quoted (an install path with a space plus a prompt with a space).
+    # Joined with a literal separator rather than os.path.join: this branch is
+    # a Windows path being built, and os.path.join would spell it with forward
+    # slashes on the machine most of this suite's platform-faking runs on.
+    system_root = os.environ.get("SystemRoot") or "C:\\Windows"
+    comspec = os.environ.get("ComSpec") or f"{system_root}\\System32\\cmd.exe"
+    inner = " ".join(f'"{part}"' for part in parts)
+    return f'"{comspec}" /d /s /c "{inner}"'
+
+
 def normalize_rc(returncode: int) -> int:
     """Python reports a signal-killed child as ``-N``; zsh reports ``128+N``."""
     return 128 - returncode if returncode < 0 else returncode
@@ -160,7 +236,15 @@ def _invoke(
     it — same group on POSIX, ``CREATE_NEW_PROCESS_GROUP`` plus forwarded
     ``CTRL_BREAK_EVENT`` on Windows — and a change to either must be made in
     both places.
+
+    On Windows a batch-shim CLI runs under a cmd.exe this function spawned (see
+    :func:`_launch_command`), which widens the limitation this module's
+    docstring already states: ``terminate()``/``kill()`` then reach cmd.exe and
+    not the CLI behind it. ``CREATE_NEW_PROCESS_GROUP`` puts both in the same
+    new group, so the ``CTRL_BREAK_EVENT`` path — the one that matters for
+    Ctrl+C — still reaches the CLI itself.
     """
+    command = _launch_command(argv)
     kwargs: dict[str, object] = {"cwd": cwd}
     if IS_WINDOWS:
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -169,14 +253,14 @@ def _invoke(
         kwargs["stderr"] = subprocess.STDOUT
 
     if seconds <= 0 or seconds > _MAX_DEADLINE:
-        return normalize_rc(run_interruptible(argv, **kwargs).returncode), False
+        return normalize_rc(run_interruptible(command, **kwargs).returncode), False
 
     # `with Popen(...)`, plus a kill on the way out of any exception this
     # function does not otherwise handle — exactly what subprocess.run does,
     # and for the same reason: between spawn and wait, ANY escaping exception
     # (not just the two named below) would otherwise leave a live child with
     # nobody left to reap it.
-    with subprocess.Popen(argv, **kwargs) as proc:  # type: ignore[arg-type]
+    with subprocess.Popen(command, **kwargs) as proc:  # type: ignore[arg-type]
         try:
             proc.communicate(timeout=seconds)
         except subprocess.TimeoutExpired:
