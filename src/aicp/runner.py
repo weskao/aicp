@@ -158,6 +158,23 @@ _BATCH_SUFFIXES = frozenset({".cmd", ".bat"})
 _CMD_UNSAFE = frozenset('"%\r\n\x00')
 
 
+def _cmd_quote(part: str) -> str:
+    """Wrap *part* in the quotes cmd.exe needs, keeping the closing one a
+    delimiter.
+
+    A trailing run of backslashes has to be doubled first. cmd.exe hands the
+    line to a batch shim, the shim hands it to the binary it wraps (node, for
+    every npm-installed CLI), and THAT binary splits its own argv on the
+    Microsoft C-runtime rule, where ``\\"`` is a literal quote rather than a
+    delimiter. An odd-length trailing run would therefore escape the closing
+    quote and let one argument swallow the next — a boundary desync two layers
+    below the one :data:`_CMD_UNSAFE` screens. ``subprocess.list2cmdline``
+    doubles them for exactly this reason; so does this.
+    """
+    trailing = len(part) - len(part.rstrip("\\"))
+    return '"' + part + "\\" * trailing + '"'
+
+
 def _launch_command(argv: list[str]) -> list[str] | str:
     """*argv* rewritten so this platform can actually start it.
 
@@ -194,7 +211,7 @@ def _launch_command(argv: list[str]) -> list[str] | str:
     # slashes on the machine most of this suite's platform-faking runs on.
     system_root = os.environ.get("SystemRoot") or "C:\\Windows"
     comspec = os.environ.get("ComSpec") or f"{system_root}\\System32\\cmd.exe"
-    inner = " ".join(f'"{part}"' for part in parts)
+    inner = " ".join(_cmd_quote(part) for part in parts)
     return f'"{comspec}" /d /s /c "{inner}"'
 
 

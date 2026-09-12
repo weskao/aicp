@@ -223,7 +223,9 @@ def test_launch_command_falls_back_to_system32_when_comspec_is_unset(
     )
 
 
-@pytest.mark.parametrize("hostile", ['/commit"', "/commit%PATH%", "/com\rmit"])
+@pytest.mark.parametrize(
+    "hostile", ['/commit"', "/commit%PATH%", "/com\rmit", "/com\nmit", "/com\x00mit"]
+)
 def test_launch_command_refuses_an_argument_cmd_would_interpret(fake_windows, hostile):
     """Quoting each argument neutralizes cmd's metacharacters except these two:
     a quote ends the quoting, and %VAR% expands inside quotes too. Neither has
@@ -233,6 +235,40 @@ def test_launch_command_refuses_an_argument_cmd_would_interpret(fake_windows, ho
     fake_windows(r"C:\npm\copilot.cmd")
     with pytest.raises(ValueError, match="cmd.exe"):
         runner._launch_command(["copilot", "-p", hostile])
+
+
+@pytest.mark.parametrize(
+    ("raw", "quoted"),
+    [
+        ("plain", '"plain"'),
+        ("with space", '"with space"'),
+        ("ends\\", '"ends\\\\"'),        # 1 trailing backslash -> 2
+        ("ends\\\\", '"ends\\\\\\\\"'),    # 2 -> 4
+        ("mid\\dle", '"mid\\dle"'),      # only a TRAILING run is doubled
+    ],
+)
+def test_cmd_quote_doubles_only_a_trailing_backslash_run(raw, quoted):
+    """The boundary desync two layers below the _CMD_UNSAFE screen.
+
+    cmd.exe hands the line to the batch shim, the shim hands it to the binary
+    it wraps, and that binary splits argv on the Microsoft C-runtime rule where
+    a backslash escapes a following quote. An odd trailing run would escape the
+    closing quote and let one argument swallow the next. Backslashes anywhere
+    else are already literal and must be left alone.
+    """
+    assert runner._cmd_quote(raw) == quoted
+
+
+def test_a_trailing_backslash_cannot_desync_the_argument_boundary(fake_windows, monkeypatch):
+    """End of the same story, at the level the launcher actually emits."""
+    monkeypatch.setenv("ComSpec", r"C:\Windows\System32\cmd.exe")
+    fake_windows(r"C:\npm\copilot.cmd")
+
+    line = runner._launch_command(["copilot", "-p", "trailing\\", "--allow-all"])
+
+    # the prompt's own backslash is doubled, so "--allow-all" stays its own
+    # argument instead of being absorbed into the prompt
+    assert r'"trailing\\" "--allow-all"' in line
 
 
 def test_a_batch_shim_is_never_launched_through_a_shell():

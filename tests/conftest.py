@@ -23,10 +23,14 @@ port.
 - ``call_log``                          — paired with ``stub_cli``; reads
   back what was recorded.
 
-**Hard rule for T2-T5:** add task-specific fixtures LOCALLY, in your own test
-module, as a plain ``@pytest.fixture``. Never edit this file — it is a
-four-way contention point and a conflicting edit here blocks every other
-task's tests from collecting.
+**Hard rule:** add task-specific fixtures LOCALLY, in your own test module, as
+a plain ``@pytest.fixture`` — never here.
+
+This rule used to read "never edit this file" outright, because T2-T5 were
+being written in parallel and a conflicting edit here blocked every other
+task's tests from collecting. That contention has ended, so the rule is now
+what it always meant: no task-specific fixtures. A small, generic helper every
+module would otherwise copy (:func:`rmtree`) belongs here and may be added.
 """
 
 from __future__ import annotations
