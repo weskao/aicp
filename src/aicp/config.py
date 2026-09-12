@@ -26,12 +26,28 @@ later used AS a command or a path. Hence three more layers:
    are excluded as defence in depth for whatever the next consumer of these
    values does with them.
 3. **Denylist** (:data:`DENYLIST`) — ``AICP_TG_SEND`` (reaches
-   ``bash "$value"``) and ``AICP_TIMING_LOG`` (reaches ``mkdir -p``, ``>>``,
-   ``mv -f``, ``rm -f``) are ENVIRONMENT-VARIABLE ONLY. Both are plain
-   literal paths that sail through the charset allowlist, and both were real
-   holes. Whoever adds the next knob that flows into an exec path or a
+   ``bash "$value"``), ``AICP_TIMING_LOG`` (reaches ``mkdir -p``, ``>>``,
+   ``mv -f``, ``rm -f``) and ``AICP_CONFIG`` (names the file this loader
+   reads, and the file :func:`persist_key` then ``mkdir -p``s and
+   ``os.replace``s onto) are ENVIRONMENT-VARIABLE ONLY. All three are plain
+   literal paths that sail through the charset allowlist, and all three were
+   real holes. Whoever adds the next knob that flows into an exec path or a
    path-mutating sink adds its name here — the charset allowlist does not
    protect against this class at all.
+
+   ``AICP_CONFIG`` is the subtlest of the three, because a file naming
+   *itself* looks inert: nothing in this module acts on the value. The zsh
+   original is immune by accident of ordering — ``: "${AICP_CONFIG:=...}"``
+   runs before its loader, so the loader's "already set, environment wins"
+   check always skips a file-supplied copy. This port has no such ordering
+   guarantee once a caller (``cli.export_settings``) puts accepted values
+   back into ``os.environ``: the NEXT ``config_path()`` would resolve to the
+   file's chosen path, and the next ``persist_key`` — an ordinary
+   ``--config`` menu write — would create directories and atomically replace
+   a file the user never named. A ``.aicprc`` arriving from someone else's
+   dotfiles repo is exactly the delivery mechanism this loader was hardened
+   against, so the key is denied at the source rather than filtered at each
+   consumer.
 
 ``AICP_TIMEOUT_BIN`` is the fourth case and is deliberately NOT on the
 denylist: it is never taken from configuration in the first place. See
@@ -71,8 +87,10 @@ __all__ = [
 
 #: Exec-path and path-mutation knobs: settable from the real environment (a
 #: boundary the user controls directly), never from a file that can arrive
-#: synced from someone else's dotfiles repo.
-DENYLIST = frozenset({"AICP_TG_SEND", "AICP_TIMING_LOG"})
+#: synced from someone else's dotfiles repo. ``AICP_CONFIG`` belongs here for
+#: the reason spelled out in this module's docstring — a file must not be able
+#: to rename the file the next write lands on.
+DENYLIST = frozenset({"AICP_TG_SEND", "AICP_TIMING_LOG", "AICP_CONFIG"})
 
 #: Knobs resolved from the system, never from configuration — see
 #: :func:`timeout_bin`. Kept as a set so the reason is greppable from both

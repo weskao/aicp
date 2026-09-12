@@ -184,11 +184,14 @@ def test_arithmetic_assignment_value_never_reaches_path(cfg):
 # ── SECURITY: the exec-path / path-mutation denylist ─────────────────────────
 
 
-def test_denylist_names_both_environment_only_knobs():
-    assert set(DENYLIST) == {"AICP_TG_SEND", "AICP_TIMING_LOG"}
+def test_denylist_names_every_environment_only_knob():
+    # AICP_CONFIG joined the two exec-path/path-mutation knobs once cli.py
+    # began exporting accepted values back into os.environ: a file naming
+    # itself would otherwise re-point the next persist_key write.
+    assert set(DENYLIST) == {"AICP_TG_SEND", "AICP_TIMING_LOG", "AICP_CONFIG"}
 
 
-@pytest.mark.parametrize("key", ["AICP_TG_SEND", "AICP_TIMING_LOG"])
+@pytest.mark.parametrize("key", ["AICP_TG_SEND", "AICP_TIMING_LOG", "AICP_CONFIG"])
 def test_denylisted_key_from_config_is_refused_and_announced(
     cfg, marker_payload, capsys, key
 ):
