@@ -1,0 +1,31 @@
+# .aicprc.example — copy to ~/.aicprc to set fleet-wide defaults.
+#
+# Precedence, highest to lowest: environment variable > this file > the
+# hardcoded default. Only KEY=value lines matching AICP_[A-Z0-9_]* are read;
+# blank lines and #-comments are skipped. Ported from the same loader in
+# ~/scripts/bin/aicp — see that file's header comment for the full posture
+# (parsed, never sourced/eval'd; two knobs are environment-variable only and
+# refused here: AICP_TG_SEND, AICP_TIMING_LOG).
+
+# Run the /commit step (0 or 1).
+#AICP_DO_COMMIT=1
+
+# Run the /safe-git-push step (0 or 1).
+#AICP_DO_PUSH=1
+
+# Message language: en or zh-TW.
+#AICP_LANG=en
+
+# Fallback CLI order — a prefix of the roster (copilot agy codex claude vibe);
+# any roster name left out is appended automatically, in roster order.
+#AICP_CLI_ORDER=copilot agy codex claude vibe
+
+# Per-CLI-call timeout floor / growth / ceiling (seconds).
+#AICP_TIMEOUT_BASE=180
+#AICP_TIMEOUT_PER_FILE=15
+#AICP_TIMEOUT_PER_100L=5
+#AICP_TIMEOUT_MAX=1800
+
+# Commit-timestamp display timezone.
+#AICP_TZ=Asia/Taipei
+#AICP_TZ_LABEL=UTC+8
