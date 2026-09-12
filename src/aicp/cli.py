@@ -36,7 +36,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import NoReturn
 
-from . import __version__, config, gitflow, menu, notify, present, runner, skills
+from . import __version__, config, gitflow, i18n, menu, notify, present, runner, skills
 from ._utils import BLUE, BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW, have
 from .contracts import ROSTER
 from .i18n import t
@@ -68,15 +68,40 @@ def export_settings(settings: config.Settings) -> None:
     **environment still beats file**. Only a key the file alone supplied is
     added.
 
+    ``lang`` is bridged separately because its consumer does not read the
+    environment per call: :data:`aicp.i18n.LANGUAGE` is resolved once at
+    import, which is strictly before this function can run, so exporting
+    ``AICP_LANG`` alone would leave every run English no matter what the
+    ``--config`` menu wrote. ``settings.lang`` is already validated against
+    the same rule :func:`aicp.i18n._resolve_language` applies, and this is its
+    only reader.
+
     Safe by construction with respect to :data:`aicp.config.DENYLIST`:
     ``settings.values`` is what :func:`aicp.config.load_config` accepted, and
-    that loader drops ``AICP_TG_SEND`` / ``AICP_TIMING_LOG`` before they ever
-    reach here — so a file can still never smuggle an exec-path or
-    path-mutation knob into the environment through this door. Whoever adds
-    the next such knob adds it to ``DENYLIST``, not to a filter here.
+    that loader drops every denied key — ``AICP_TG_SEND`` (reaches ``bash
+    "$value"``), ``AICP_TIMING_LOG`` (path-mutating sinks) and ``AICP_CONFIG``
+    (would re-point the next ``persist_key`` write) — before they ever reach
+    here. So a file can never smuggle an exec-path or path-mutation knob into
+    the environment through this door. Whoever adds the next such knob adds it
+    to ``DENYLIST``, not to a filter here.
+
+    Two things this deliberately does NOT close, both stated rather than left
+    to be discovered:
+
+    * ``AICP_SKIP_SECRET_SCAN=1`` in a ``.aicprc`` really does switch that
+      run's secret scan off. That is parity with the zsh original (whose
+      loader ``typeset -g``s the same key) and is what ``.aicprc.example``
+      documents; it is accepted knowingly, not overlooked. Denying it would be
+      a behaviour change worth making on purpose, not as a side effect here.
+    * ``os.environ`` is inherited by children, where zsh's ``typeset -g`` was
+      a shell global that was not exported. Every ``AICP_*`` key a file
+      supplies is therefore visible to git and to the AI CLI subprocess. The
+      blast radius is bounded by the loader's ``AICP_*`` key allowlist, so no
+      unrelated variable can be set this way.
     """
     for key, value in settings.values.items():
         os.environ.setdefault(key, value)
+    i18n.LANGUAGE = settings.lang
 
 
 # ── small local helpers ──────────────────────────────────────────────────────
@@ -257,8 +282,6 @@ def _commit_step(
     settings: config.Settings, chain: Sequence[str], before: str, *, verbose: bool
 ) -> int | None:
     """``None`` to carry on; an exit code to stop the run."""
-    dirty = bool(_git_out("status", "--porcelain"))
-
     if not settings.do_commit:
         _dim(
             t(
@@ -267,7 +290,9 @@ def _commit_step(
             )
         )
         return None
-    if not dirty:
+    # Read AFTER the config gate, so a run with /commit switched off pays for
+    # no status call at all.
+    if not _git_out("status", "--porcelain"):
         _dim(t("skip_commit_clean", "▸ no uncommitted changes — skipping /commit"))
         return None
 
@@ -438,8 +463,8 @@ def _flow(settings: config.Settings, *, verbose: bool) -> int:
     # installed", then the expensive secret scan) and refuses the run outright
     # on a secret hit — no AI CLI is invoked on that path.
     # ponytail: _commit_step re-reads `git status --porcelain` to decide
-    # "dirty", one extra warm call rather than widening precheck's frozen
-    # return shape; revisit only if a repo is big enough to notice.
+    # "dirty" — one extra, already-warm call rather than widening precheck's
+    # frozen return shape. Revisit only if a repo is big enough to notice.
     with _spin(t("spin_precheck", "checking the working tree…"), verbose):
         proceed, lines = gitflow.precheck(chain, do_commit=settings.do_commit)
     _echo(lines)
@@ -464,6 +489,20 @@ def _flow(settings: config.Settings, *, verbose: bool) -> int:
 
 
 # ── entry point ──────────────────────────────────────────────────────────────
+
+
+#: Sub-flag -> the flag it qualifies. A sub-flag on its own is refused rather
+#: than ignored: `aicp --json` silently running a full commit and push, because
+#: the user meant `--doctor --json`, is the one misread worth three lines.
+_SUB_FLAGS = {"json": "doctor", "yes": "install_skills", "force": "install_skills"}
+
+
+def _reject_orphan_sub_flags(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    for sub, parent in _SUB_FLAGS.items():
+        if getattr(args, sub) and not getattr(args, parent):
+            parser.error(
+                f"--{sub} only applies to --{parent.replace('_', '-')}"
+            )
 
 
 def _dispatch(args: argparse.Namespace) -> int:
@@ -498,6 +537,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     try:
         args = parser.parse_args(argv)
+        _reject_orphan_sub_flags(parser, args)
     except SystemExit as exc:  # --help/--version (0), or a bad flag (1)
         return int(exc.code or 0)
 

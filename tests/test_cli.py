@@ -24,8 +24,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import rmtree
 
-from aicp import budget, cli, config, gitflow, runner
+from aicp import budget, cli, config, gitflow, i18n, runner
 from aicp import notify as notify_mod
 
 # ── local helpers ────────────────────────────────────────────────────────────
@@ -69,20 +70,23 @@ def prompts(call_log: Path) -> list[str]:
 
 
 @pytest.fixture(autouse=True)
-def restore_environ():
+def restore_process_globals():
     """Undo what the D3 bridge exports.
 
-    :func:`aicp.cli.export_settings` writes straight into ``os.environ`` — that
-    IS the bridge, and in a real run the process exits moments later. In a test
-    session it would outlive the test and reconfigure every module that reads
-    the environment afterwards (``test_config.py`` is the one that notices
-    first), so this module puts the environment back itself; ``monkeypatch``
-    only undoes changes ``monkeypatch`` made.
+    :func:`aicp.cli.export_settings` writes straight into ``os.environ`` and
+    reassigns :data:`aicp.i18n.LANGUAGE` — that IS the bridge, and in a real
+    run the process exits moments later. In a test session both would outlive
+    the test and reconfigure every module that reads them afterwards
+    (``test_config.py`` is the one that notices the environment first), so this
+    module puts them back itself; ``monkeypatch`` only undoes changes
+    ``monkeypatch`` made, and it made neither of these.
     """
     before = dict(os.environ)
+    language = i18n.LANGUAGE
     yield
     os.environ.clear()
     os.environ.update(before)
+    i18n.LANGUAGE = language
 
 
 @pytest.fixture
@@ -217,7 +221,9 @@ def test_do_commit_off_skips_commit_but_still_pushes(
 ):
     stub_cli()
     monkeypatch.setenv("AICP_DO_COMMIT", "0")
-    run(repo_ahead)
+    # The stub pushes nothing, so the run legitimately ends ahead of the
+    # remote: exit 1, not 0. Asserting it is what pins _report's verdict.
+    assert run(repo_ahead) == 1
     assert "/commit" not in prompts(call_log)
     assert "/safe-git-push" in prompts(call_log)
 
@@ -227,7 +233,7 @@ def test_do_push_off_still_commits(
 ):
     stub_cli()
     monkeypatch.setenv("AICP_DO_PUSH", "0")
-    run(repo_ahead)
+    assert run(repo_ahead) == 1
     assert "/commit" in prompts(call_log)
     assert "/safe-git-push" not in prompts(call_log)
 
@@ -245,9 +251,45 @@ def test_a_branch_behind_the_remote_still_runs_safe_git_push(
     run, aicprc, repo_behind, stub_cli, call_log
 ):
     stub_cli()
-    run(repo_behind)
+    assert run(repo_behind) == 1  # the stub rebased nothing — still behind
     assert "/commit" not in prompts(call_log)
     assert "/safe-git-push" in prompts(call_log)
+
+
+# ── the git-verified RESULT table ────────────────────────────────────────────
+
+
+def test_an_unresolvable_remote_is_never_reported_as_in_sync(
+    run, aicprc, git_repo_synced, stub_cli, capsys
+):
+    """A remote that cannot be resolved must fail, not read as "0 ahead, 0
+    behind" — the false positive the whole verification exists to catch."""
+    repo, bare = git_repo_synced
+    stub_cli()
+    rmtree(bare)
+    git(repo, "update-ref", "-d", "refs/remotes/origin/main")
+    assert run(repo) == 1
+    out = capsys.readouterr().out
+    assert "cannot verify the push" in out
+    assert "in sync" not in out
+
+
+def test_the_result_table_counts_commits_git_made_not_what_a_cli_claimed(
+    run, aicprc, git_repo_synced, stub_cli, capsys, tmp_path
+):
+    """The stub prints a triumphant "pushed 7 commits!" and creates none; the
+    table must report what git actually has."""
+    repo, _bare = git_repo_synced
+    bin_dir = stub_cli(clis=("copilot",))
+    (bin_dir / "copilot").write_text(
+        "#!/bin/sh\necho 'Done! Created 7 commits and pushed them.'\nexit 0\n",
+        encoding="utf-8",
+    )
+    (repo / "work.txt").write_text("work\n", encoding="utf-8")
+    run(repo)
+    out = capsys.readouterr().out
+    assert "New commits" in out
+    assert "7" not in out.split("New commits")[1].splitlines()[0]
 
 
 def test_a_clean_in_sync_repo_needs_no_ai_cli_installed(run, aicprc, git_repo_synced):
@@ -356,7 +398,7 @@ def test_no_nudge_when_the_cli_is_not_configured(
 # ── the config -> consumer bridge (defect D3) ────────────────────────────────
 
 
-def test_an_aicprc_timeout_reaches_budget(aicprc, git_repo, monkeypatch):
+def test_an_aicprc_timeout_reaches_budget(aicprc, git_repo):
     aicprc.write_text("AICP_TIMEOUT_BASE=999\n", encoding="utf-8")
     assert budget.compute("copilot", cwd=git_repo).seconds == budget.FLOOR
     cli.export_settings(config.resolve())
@@ -390,6 +432,54 @@ def test_the_bridge_never_imports_a_denylisted_key_from_the_file(aicprc, monkeyp
     cli.export_settings(config.resolve())
     assert "AICP_TG_SEND" not in os.environ
     assert "AICP_TIMING_LOG" not in os.environ
+
+
+def test_an_aicprc_cannot_rename_the_file_the_next_write_lands_on(
+    tmp_path, monkeypatch, pinned_environment, capsys
+):
+    """Regression: with ``AICP_CONFIG`` bridged into the environment, the NEXT
+    ``config_path()`` would resolve to the file's chosen path and the next
+    ``persist_key`` — an ordinary ``--config`` menu write — would mkdir and
+    atomically replace a file the user never named.
+
+    No ``AICP_CONFIG`` in the environment here on purpose: the file has to be
+    found at its default location, so the only possible source for the key is
+    the file itself.
+    """
+    monkeypatch.delenv("AICP_CONFIG", raising=False)
+    real = pinned_environment / ".aicprc"
+    hijacked = tmp_path / "hijacked" / "authorized_keys"
+    real.write_text(f"AICP_CONFIG={hijacked}\n", encoding="utf-8")
+    assert config.config_path() == real  # the file really is the one being read
+
+    cli.export_settings(config.resolve())
+
+    assert "ignoring AICP_CONFIG" in capsys.readouterr().err
+    assert "AICP_CONFIG" not in os.environ
+    assert config.config_path() == real
+    assert gitflow.config_path() == real
+    config.persist_key("AICP_DO_PUSH", "0", config.config_path())
+    assert not hijacked.exists()
+    assert not hijacked.parent.exists()
+
+
+def test_an_aicprc_language_actually_reaches_the_translator(aicprc):
+    """Regression: ``i18n.LANGUAGE`` is resolved at import — strictly before
+    the bridge can run — so exporting ``AICP_LANG`` alone left every run
+    English no matter what the ``--config`` menu had written."""
+    aicprc.write_text("AICP_LANG=zh-TW\n", encoding="utf-8")
+    assert i18n.LANGUAGE == "en"
+    cli.export_settings(config.resolve())
+    assert i18n.LANGUAGE == "zh-TW"
+
+
+def test_a_real_language_environment_variable_still_beats_the_file(
+    aicprc, monkeypatch
+):
+    aicprc.write_text("AICP_LANG=zh-TW\n", encoding="utf-8")
+    monkeypatch.setenv("AICP_LANG", "en")
+    cli.export_settings(config.resolve())
+    assert i18n.LANGUAGE == "en"
 
 
 def test_a_real_run_applies_the_bridge(run, aicprc, git_repo_synced, stub_cli):
@@ -511,3 +601,36 @@ def test_install_skills_with_yes_installs(run, aicprc, git_repo, pinned_environm
     (pinned_environment / ".copilot").mkdir()
     assert run(git_repo, "--install-skills", "--yes") == 0
     assert (pinned_environment / ".copilot" / "skills" / "commit" / "SKILL.md").is_file()
+
+
+def test_install_skills_keeps_a_foreign_file_unless_forced(
+    run, aicprc, git_repo, pinned_environment
+):
+    """A file with no aicp sidecar is the user's own — never overwritten
+    silently, and backed up even when forced."""
+    target = pinned_environment / ".copilot" / "skills" / "commit" / "SKILL.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("my own commit skill\n", encoding="utf-8")
+
+    assert run(git_repo, "--install-skills", "--yes") == 0
+    assert target.read_text(encoding="utf-8") == "my own commit skill\n"
+
+    assert run(git_repo, "--install-skills", "--yes", "--force") == 0
+    assert target.read_text(encoding="utf-8") != "my own commit skill\n"
+    assert (target.parent / "SKILL.md.bak").read_text(
+        encoding="utf-8"
+    ) == "my own commit skill\n"
+
+
+@pytest.mark.parametrize(
+    ("orphan", "parent"),
+    [("--json", "--doctor"), ("--yes", "--install-skills"), ("--force", "--install-skills")],
+)
+def test_a_sub_flag_without_its_parent_is_refused_not_ignored(
+    run, aicprc, repo_ahead, stub_cli, call_log, capsys, orphan, parent
+):
+    """``aicp --json`` must not silently run a full commit and push."""
+    stub_cli()
+    assert run(repo_ahead, orphan) != 0
+    assert calls(call_log) == []
+    assert parent in capsys.readouterr().err
