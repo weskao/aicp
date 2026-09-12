@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import rmtree
 
 from aicp import gitflow
 from aicp.contracts import ROSTER
@@ -98,7 +99,7 @@ def test_a_failed_fetch_is_never_reported_as_in_sync(
     remote-tracking ref survives locally and still answers 0/0, but about the
     past. A stale "already in sync" SKIPS the push entirely."""
     repo, bare = git_repo_synced
-    shutil.rmtree(bare)
+    rmtree(bare)
 
     state = gitflow.remote_state("origin", "main", repo)
     assert state.fetched is False
@@ -290,7 +291,7 @@ def test_result_summary_states_a_failed_fetch_out_loud(
     git_repo_synced: tuple[Path, Path],
 ) -> None:
     repo, bare = git_repo_synced
-    shutil.rmtree(bare)
+    rmtree(bare)
     head = git(repo, "rev-parse", "HEAD").stdout.strip()
     summary = gitflow.result_summary(head, head, "origin", "main", repo)
 

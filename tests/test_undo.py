@@ -12,11 +12,11 @@ risky one, not the convenient one.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import rmtree
 
 from aicp import gitflow
 
@@ -131,7 +131,7 @@ def test_undo_refuses_when_the_fetch_failed_even_though_the_stale_ref_resolves(
     local — the exact case the guard exists for."""
     repo, bare = git_repo_synced
     before = add_commit(repo, "wip.txt", "feat: local only")
-    shutil.rmtree(bare)
+    rmtree(bare)
 
     ok, lines = gitflow.undo(repo)
 

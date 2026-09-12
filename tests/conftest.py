@@ -32,6 +32,7 @@ task's tests from collecting.
 from __future__ import annotations
 
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -88,6 +89,25 @@ def _init_repo(path: Path) -> Path:
     _git("init", "-q", "-b", "main", cwd=path)
     _git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init", cwd=path)
     return path
+
+
+def rmtree(path: Path) -> None:
+    """``shutil.rmtree`` that also works on a git object store on Windows.
+
+    git writes loose objects read-only. POSIX needs write permission on the
+    *containing directory* to unlink a file and ignores the file's own mode, so
+    macOS and Linux delete a bare repo without noticing; Windows honors the
+    read-only attribute on the file itself and fails the unlink with
+    ``PermissionError: [WinError 5]``. Clearing the bit first is the portable
+    fix, and needs no ``onerror``/``onexc`` branch (the two spellings of
+    rmtree's error hook, which swapped names in 3.12).
+
+    Used by the tests that delete a bare remote to simulate a failed fetch.
+    """
+    if sys.platform == "win32":
+        for child in Path(path).rglob("*"):
+            child.chmod(stat.S_IWRITE)
+    shutil.rmtree(path)
 
 
 @pytest.fixture
