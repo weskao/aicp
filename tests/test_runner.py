@@ -497,10 +497,18 @@ def test_an_unhandled_error_in_the_runner_leaves_no_child_running(
     sh_stub("copilot", f'echo $$ > "{pidfile}"\nsleep 30\n')
     _explode_at_communicate(monkeypatch, pidfile, marker="copilot")
 
+    started = time.monotonic()
     with pytest.raises(OverflowError):
         run(chain=("copilot",))
+    elapsed = time.monotonic() - started
 
     assert pid_is_gone(int(pidfile.read_text())), "the runner leaked a running child"
+    # `pid is gone` alone cannot see the kill: `with Popen(...)`'s __exit__ waits
+    # unboundedly, so deleting proc.kill() reaches the same end state by sitting
+    # out the stub's `sleep 30` — and against a genuinely long-running CLI it
+    # would hang aicp forever with the suite still green. The clock is the only
+    # witness: ~0.9s killed vs ~30s waited out.
+    assert elapsed < 20, f"the child was waited out, not killed ({elapsed:.1f}s)"
 
 
 @POSIX_ONLY
@@ -516,10 +524,14 @@ def test_an_unhandled_error_in_run_interruptible_leaves_no_child_running(
     pidfile = tmp_path / "utils-child.pid"
     _explode_at_communicate(monkeypatch, pidfile, marker=str(pidfile))
 
+    started = time.monotonic()
     with pytest.raises(OverflowError):
         _utils.run_interruptible(["/bin/sh", "-c", f'echo $$ > "{pidfile}"; sleep 30'])
+    elapsed = time.monotonic() - started
 
     assert pid_is_gone(int(pidfile.read_text())), "run_interruptible leaked a running child"
+    # See the elapsed-bound rationale on the runner twin above.
+    assert elapsed < 20, f"the child was waited out, not killed ({elapsed:.1f}s)"
 
 
 # ── the runner stays decoupled from its siblings ─────────────────────────────
