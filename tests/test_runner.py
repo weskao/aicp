@@ -167,7 +167,13 @@ def fake_windows(monkeypatch):
     return _resolve
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="on Windows this would pass for the wrong reason: which() finds no "
+    "real copilot on a CI runner, so the unresolved branch returns argv too",
+)
 def test_launch_command_is_a_passthrough_off_windows():
+    """POSIX launches a bare name itself — nothing here may rewrite argv."""
     argv = ["copilot", "-p", "/commit", "--allow-all"]
     assert runner._launch_command(argv) is argv
 
