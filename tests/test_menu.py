@@ -321,11 +321,16 @@ def test_non_tty_fallback_is_taken_on_a_real_pipe_fd():
 
 
 def test_rows_are_data_addressed_by_index(menu):
+    # The last two are the appended action rows (Skills, Doctor): they run
+    # something instead of persisting a setting, hence no config key. See
+    # test_menu_skills.py.
     assert tuple(row.key for row in ROWS) == (
         "AICP_DO_COMMIT",
         "AICP_DO_PUSH",
         "AICP_LANG",
         "AICP_CLI_ORDER",
+        "",
+        "",
     )
     _, out, _ = menu("q\n")
     for i, _row in enumerate(ROWS, start=1):
