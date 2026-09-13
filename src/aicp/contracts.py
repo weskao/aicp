@@ -95,30 +95,50 @@ ROSTER: tuple[CLI, ...] = (
 NotifyFn = Callable[[str], None]
 
 
-# ── vendored-skill version marker ────────────────────────────────────────────
+# ── installed-skill bookkeeping ──────────────────────────────────────────────
 #
-# skills/commit.md and skills/safe-git-push/ are BYTE-IDENTICAL copies of
-# ~/.claude/commands/commit.md and ~/.claude/skills/safe-git-push/ — no marker
-# is ever written INTO those files, since that would make them stop being
-# byte-identical to the source they were vendored from.
+# aicp records what it installed in ONE file of its own, and writes nothing
+# else anywhere near a CLI's config dir:
 #
-# Instead, the marker is a SIDECAR file placed next to each vendored copy:
-#   - a single-file skill (commit.md)      -> "<path>.aicp-version" next to it,
-#     e.g. skills/commit.md.aicp-version
-#   - a directory skill (safe-git-push/)   -> "<dir>/.aicp-version" at the
-#     skill directory's own root, e.g. skills/safe-git-push/.aicp-version
-#     (covers every file vendored under that directory as one unit — it is
-#     one vendoring operation, not one marker per file inside it)
+#   $HOME/.aicp/state.json
+#   {
+#     "version": 1,
+#     "skills": {
+#       "<absolute install target>": {
+#         "version": "<aicp.__version__ at install time>",
+#         "files": {"<path relative to the target>": "<sha256 hex>", ...}
+#       }
+#     }
+#   }
 #
-# Sidecar content is exactly one line: "x-aicp-version: <version>\n", where
-# <version> is this package's own version (see aicp.__version__ / the
-# [project].version key in pyproject.toml at vendor time).
+# A single-file skill records its one file under the key ".". The state file
+# is keyed on $HOME alone — never on GROK_HOME or any per-CLI root — because
+# it is one record per user covering every target across every CLI.
 #
-# Consumer: T5 (the skills installer) implements the detector — given a
-# candidate install target, check for a sidecar named per the two rules
-# above; if present, parse the `x-aicp-version: (\S+)` line to decide whether
-# an already-installed copy came from aicp and, if so, which version, before
-# deciding whether to overwrite it. No sidecar present means "not ours, or a
-# hand-edited copy" — never overwrite silently in that case.
-SKILL_VERSION_SUFFIX = ".aicp-version"  # single-file skill: "<path>" + this suffix
-SKILL_VERSION_MARKER = ".aicp-version"  # directory skill: this filename at the dir root
+# Consumer: T5 (the skills installer). Two properties matter, and they are
+# why the record stores HASHES rather than just a version:
+#
+#   * "is this ours?"       — a target with no record, whose content does not
+#                             match what this version would write, is the
+#                             user's. Never overwrite it without force.
+#   * "is it still ours?"   — a target we DID install, whose recorded files no
+#                             longer hash to what we wrote, has been edited by
+#                             hand since. It is treated as the user's too. A
+#                             version-only marker cannot see this, which is
+#                             exactly how a hand-edited skill used to get
+#                             silently displaced on the next version bump.
+#
+# Only recorded files are hashed, so anything the user ADDS alongside them
+# (an extra script, a .DS_Store, a .bak) is not mistaken for a modification.
+STATE_DIR_NAME = ".aicp"  # under $HOME
+STATE_FILE_NAME = "state.json"
+STATE_SCHEMA_VERSION = 1
+
+# LEGACY — aicp <= 0.1.0 wrote an in-place sidecar next to every installed
+# skill instead of the state file above: "<path>.aicp-version" for a
+# single-file skill, "<dir>/.aicp-version" at a directory skill's own root,
+# containing one line "x-aicp-version: <version>\n". These names survive only
+# so the installer can find such a marker, fold it into state.json, and DELETE
+# it. Nothing writes them any more; do not reintroduce one.
+SKILL_VERSION_SUFFIX = ".aicp-version"  # legacy single-file: "<path>" + this suffix
+SKILL_VERSION_MARKER = ".aicp-version"  # legacy directory: this name at the dir root

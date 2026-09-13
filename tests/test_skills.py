@@ -21,13 +21,52 @@ from pathlib import Path
 import pytest
 
 from aicp import __version__, skills
-from aicp.contracts import ROSTER, SKILL_VERSION_MARKER, SKILL_VERSION_SUFFIX
+from aicp.contracts import (
+    ROSTER,
+    SKILL_VERSION_MARKER,
+    SKILL_VERSION_SUFFIX,
+    STATE_DIR_NAME,
+    STATE_FILE_NAME,
+)
 
 
 def cli(name: str):
     """The frozen ROSTER entry for *name* (never construct one locally —
     ``agy``'s ``config_dir`` is ``~/.gemini``, and only ROSTER knows that)."""
     return next(c for c in ROSTER if c.name == name)
+
+
+def markers_under(root: Path) -> list[Path]:
+    """Every legacy in-place marker under *root*.
+
+    Spelled as an explicit suffix test rather than ``rglob("*.aicp-version")``
+    so it catches the bare dotfile form (``.aicp-version``) on every platform
+    without depending on how a glob treats a leading dot or an empty ``*``.
+    """
+    return sorted(p for p in root.rglob("*") if p.name.endswith(SKILL_VERSION_SUFFIX))
+
+
+def age_record(target: Path, home: Path, version: str = "0.0.1") -> None:
+    """Re-stamp this target's record as an OLDER aicp install, hashes intact.
+
+    Hashes intact is the point: an aged record whose files still match is
+    ``ours_older`` (upgrade it), while an edited file is ``foreign`` however
+    old the record is. Tests that want the latter edit the file instead.
+    """
+    records = skills._load_state(home)
+    records[str(target)]["version"] = version
+    skills._save_state(records, home)
+
+
+def write_legacy_sidecar(target: Path, *, is_dir: bool, version: str) -> Path:
+    """Recreate what aicp <= 0.1.0 left next to an installed skill."""
+    sidecar = (
+        target / SKILL_VERSION_MARKER
+        if is_dir
+        else target.with_name(target.name + SKILL_VERSION_SUFFIX)
+    )
+    sidecar.write_text(f"x-aicp-version: {version}\n", encoding="utf-8")
+    return sidecar
 
 
 @pytest.fixture
@@ -176,17 +215,15 @@ def test_state_current_after_install(configured):
 def test_state_ours_older(configured):
     h = configured("codex")
     skills.install([cli("codex")], home=h)
-    sidecar = h / (".codex/skills/commit/SKILL.md" + SKILL_VERSION_SUFFIX)
-    sidecar.write_text("x-aicp-version: 0.0.1\n", encoding="utf-8")
-    dir_sidecar = h / ".codex/skills/safe-git-push" / SKILL_VERSION_MARKER
-    dir_sidecar.write_text("x-aicp-version: 0.0.1\n", encoding="utf-8")
+    age_record(h / ".codex/skills/commit/SKILL.md", h)
+    age_record(h / ".codex/skills/safe-git-push", h)
 
     assert skills.detect(cli("codex"), "commit", home=h) == skills.OURS_OLDER
     assert skills.detect(cli("codex"), "safe-git-push", home=h) == skills.OURS_OLDER
 
 
-def test_state_foreign_when_no_sidecar(configured):
-    """No aicp sidecar → the user's own file. The important one."""
+def test_state_foreign_when_nothing_was_recorded(configured):
+    """No record and content we'd never write → the user's own file."""
     h = configured("codex")
     target = h / ".codex/skills/commit/SKILL.md"
     target.parent.mkdir(parents=True)
@@ -202,6 +239,242 @@ def test_state_foreign_for_a_directory_skill(configured):
     (target / "SKILL.md").write_text("mine\n", encoding="utf-8")
 
     assert skills.detect(cli("codex"), "safe-git-push", home=h) == skills.FOREIGN
+
+
+# ── the hand-edit hole: a version-only marker cannot see content ─────────────
+
+
+def test_a_hand_edited_file_is_foreign_not_ours(configured):
+    """THE bug this bookkeeping exists to close.
+
+    A version-only marker says "aicp wrote this", never "this is still what
+    aicp wrote" — so an edit made after install used to read as ours and get
+    displaced on the next version bump.
+    """
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    target = h / ".codex/skills/commit/SKILL.md"
+    target.write_text("I tuned this myself\n", encoding="utf-8")
+
+    assert skills.detect(cli("codex"), "commit", home=h) == skills.FOREIGN
+
+
+def test_an_edit_inside_a_directory_skill_is_detected(configured):
+    """Not just the entry file — every file aicp wrote is covered."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    (h / ".codex/skills/safe-git-push/scripts/safe_push.py").write_text(
+        "# my own push logic\n", encoding="utf-8"
+    )
+
+    assert skills.detect(cli("codex"), "safe-git-push", home=h) == skills.FOREIGN
+
+
+def test_a_hand_edited_file_survives_a_version_upgrade(configured):
+    """The data-loss path end to end: edit, then a version bump arrives."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    target = h / ".codex/skills/commit/SKILL.md"
+    target.write_text("I tuned this myself\n", encoding="utf-8")
+    age_record(target, h)
+
+    results = skills.install([cli("codex")], home=h)
+
+    assert target.read_text(encoding="utf-8") == "I tuned this myself\n"
+    assert not target.with_name(target.name + ".bak").exists()
+    assert [r.action for r in results if r.skill == "commit"] == [skills.KEPT]
+
+
+def test_a_file_the_user_added_is_not_a_modification(configured):
+    """Only the files aicp wrote are covered: a stray .DS_Store or an extra
+    script of the user's own must not freeze the skill at foreign."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    installed = h / ".codex/skills/safe-git-push"
+    (installed / ".DS_Store").write_bytes(b"\x00junk")
+    (installed / "scripts/mine.py").write_text("print('hi')\n", encoding="utf-8")
+
+    assert skills.detect(cli("codex"), "safe-git-push", home=h) == skills.CURRENT
+
+
+# ── the state file itself ────────────────────────────────────────────────────
+
+
+def test_install_writes_no_marker_inside_any_cli_config_dir(configured):
+    """The whole point: aicp's bookkeeping leaves the CLI's own dirs alone."""
+    h = configured("codex", "claude")
+    skills.install(home=h)
+
+    assert markers_under(h / ".codex") == []
+    assert markers_under(h / ".claude") == []
+
+
+def test_state_lives_under_home_in_one_file(configured):
+    h = configured("codex", "claude")
+    skills.install(home=h)
+
+    state = h / STATE_DIR_NAME / STATE_FILE_NAME
+    assert state.is_file()
+    recorded = json.loads(state.read_text(encoding="utf-8"))["skills"]
+    assert str(h / ".codex/skills/commit/SKILL.md") in recorded
+    assert str(h / ".claude/skills/safe-git-push") in recorded
+
+
+def test_state_records_relative_paths_with_forward_slashes(configured):
+    """Portability: a Windows install must not record ``scripts\\safe_push.py``
+    and then fail to match the same tree read on macOS or Linux."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+
+    entry = skills._load_state(h)[str(h / ".codex/skills/safe-git-push")]
+    assert "scripts/safe_push.py" in entry["files"]
+    assert not any("\\" in key for key in entry["files"])
+
+
+def test_a_single_file_skill_records_its_one_file_under_dot(configured):
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+
+    entry = skills._load_state(h)[str(h / ".codex/skills/commit/SKILL.md")]
+    assert list(entry["files"]) == ["."]
+
+
+def test_a_corrupt_state_file_never_crashes_aicp(configured):
+    """aicp must still run when its own state is garbage — the worst outcome
+    allowed is "nothing recorded", which is safe (foreign is never touched)."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    state = h / STATE_DIR_NAME / STATE_FILE_NAME
+    state.write_text("{not json at all", encoding="utf-8")
+
+    assert skills.detect(cli("codex"), "commit", home=h) == skills.CURRENT
+    assert skills.install([cli("codex")], home=h)
+
+
+def test_an_unrecorded_install_whose_content_matches_is_ours(configured):
+    """A fresh $HOME (new machine, wiped state) must not turn every installed
+    skill foreign and refuse to ever update it again."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    (h / STATE_DIR_NAME / STATE_FILE_NAME).unlink()
+
+    assert skills.detect(cli("codex"), "commit", home=h) == skills.CURRENT
+    assert skills.detect(cli("codex"), "safe-git-push", home=h) == skills.CURRENT
+
+
+def test_state_is_not_written_into_a_cli_config_dir(configured):
+    """Keyed on $HOME alone — never GROK_HOME or any per-CLI root."""
+    h = configured("grok")
+    skills.install([cli("grok")], home=h)
+
+    assert not (h / ".grok" / STATE_DIR_NAME).exists()
+    assert (h / STATE_DIR_NAME / STATE_FILE_NAME).is_file()
+
+
+# ── migrating off the legacy in-place sidecar ────────────────────────────────
+
+
+def test_a_legacy_sidecar_is_read_as_ours(configured):
+    """Before migration runs, a pre-0.2 install must still report correctly —
+    not suddenly read as foreign and refuse to upgrade."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    (h / STATE_DIR_NAME / STATE_FILE_NAME).unlink()
+    target = h / ".codex/skills/commit/SKILL.md"
+    write_legacy_sidecar(target, is_dir=False, version="0.0.1")
+
+    assert skills.detect(cli("codex"), "commit", home=h) == skills.OURS_OLDER
+
+
+def test_installing_migrates_a_legacy_sidecar_and_deletes_it(configured):
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    (h / STATE_DIR_NAME / STATE_FILE_NAME).unlink()
+    target = h / ".codex/skills/commit/SKILL.md"
+    sidecar = write_legacy_sidecar(target, is_dir=False, version="0.0.1")
+    dir_target = h / ".codex/skills/safe-git-push"
+    dir_sidecar = write_legacy_sidecar(dir_target, is_dir=True, version="0.0.1")
+
+    skills.install([cli("codex")], home=h)
+
+    assert not sidecar.exists()
+    assert not dir_sidecar.exists()
+    assert markers_under(h / ".codex") == []
+    assert skills._load_state(h)[str(target)]["version"] == __version__
+
+
+def test_migration_keeps_a_current_version_sidecar_from_forcing_a_rewrite(
+    configured,
+):
+    """A legacy install already at this version is UP_TO_DATE — the sidecar is
+    still removed, because leaving it behind is the thing being fixed."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    (h / STATE_DIR_NAME / STATE_FILE_NAME).unlink()
+    target = h / ".codex/skills/commit/SKILL.md"
+    sidecar = write_legacy_sidecar(target, is_dir=False, version=__version__)
+    before = target.stat().st_mtime_ns
+
+    results = skills.install([cli("codex")], home=h)
+
+    assert not sidecar.exists()
+    assert target.stat().st_mtime_ns == before
+    assert [r.action for r in results if r.skill == "commit"] == [skills.UP_TO_DATE]
+
+
+def test_a_legacy_sidecar_does_not_bless_content_we_would_not_write(configured):
+    """Found in the wild: another tool (the user's own cc2vibe sync) had
+    rewritten an installed skill's frontmatter, and aicp's sidecar was still
+    sitting on it claiming the current version. Migrating that sidecar as-is
+    would launder someone else's file into "ours" and overwrite it on the next
+    version bump. A sidecar claiming THIS version over content this version
+    would not write means the file was changed after install — leave it.
+    """
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    (h / STATE_DIR_NAME / STATE_FILE_NAME).unlink()
+    target = h / ".codex/skills/commit/SKILL.md"
+    target.write_text("---\nuser-invocable: true\n---\nsomeone else's\n", encoding="utf-8")
+    write_legacy_sidecar(target, is_dir=False, version=__version__)
+
+    assert skills.detect(cli("codex"), "commit", home=h) == skills.FOREIGN
+
+    results = skills.install([cli("codex")], home=h)
+
+    assert target.read_text(encoding="utf-8").endswith("someone else's\n")
+    assert [r.action for r in results if r.skill == "commit"] == [skills.KEPT]
+
+
+def test_a_legacy_sidecar_from_an_older_version_is_still_upgraded(configured):
+    """The other half: content that differs because it IS old must still
+    upgrade, or every pre-0.2 install would freeze at foreign forever."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    (h / STATE_DIR_NAME / STATE_FILE_NAME).unlink()
+    target = h / ".codex/skills/commit/SKILL.md"
+    target.write_text("aicp 0.0.1 body\n", encoding="utf-8")
+    write_legacy_sidecar(target, is_dir=False, version="0.0.1")
+
+    results = skills.install([cli("codex")], home=h)
+
+    assert "Conventional Commits" in target.read_text(encoding="utf-8")
+    assert target.with_name(target.name + ".bak").read_text(encoding="utf-8") == (
+        "aicp 0.0.1 body\n"
+    )
+    assert [r.action for r in results if r.skill == "commit"] == [skills.UPGRADED]
+
+
+def test_a_legacy_sidecar_next_to_a_foreign_file_is_still_foreign(configured):
+    """No sidecar, no record, content we'd never write — untouched."""
+    h = configured("codex")
+    target = h / ".codex/skills/commit/SKILL.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("mine\n", encoding="utf-8")
+
+    results = skills.install([cli("codex")], home=h)
+
+    assert target.read_text(encoding="utf-8") == "mine\n"
+    assert [r.action for r in results if r.skill == "commit"] == [skills.KEPT]
 
 
 # ── install safety ───────────────────────────────────────────────────────────
@@ -264,12 +537,12 @@ def test_a_backup_never_overwrites_an_earlier_backup(configured):
     target.write_text("the user's own skill\n", encoding="utf-8")
 
     skills.install([cli("codex")], home=h, force=True)
-    # Now the later version bump: our sidecar goes stale, so a plain
-    # (non-force) install upgrades — and wants to back up again.
-    target.with_name(target.name + SKILL_VERSION_SUFFIX).write_text(
-        "x-aicp-version: 0.0.1\n", encoding="utf-8"
-    )
+    # Now the later version bump: the record goes stale but still describes
+    # what is on disk, so a plain (non-force) install upgrades — and wants to
+    # back up again.
     target.write_text("aicp 0.0.1 body\n", encoding="utf-8")
+    skills._record_install(target, skills._disk_hashes(skills.SKILLS["commit"], target), h)
+    age_record(target, h)
 
     results = skills.install([cli("codex")], home=h)
 
@@ -330,7 +603,7 @@ def test_force_backs_up_files_inside_a_directory_skill(configured):
     skills.install([cli("codex")], home=h, force=True)
 
     assert (target / "SKILL.md.bak").read_text(encoding="utf-8") == "mine\n"
-    assert (target / SKILL_VERSION_MARKER).is_file()
+    assert markers_under(target) == []
     assert (target / "scripts/safe_push.py").is_file()
 
 
@@ -338,14 +611,14 @@ def test_ours_older_is_upgraded_without_force(configured):
     h = configured("codex")
     skills.install([cli("codex")], home=h)
     target = h / ".codex/skills/commit/SKILL.md"
-    sidecar = target.with_name(target.name + SKILL_VERSION_SUFFIX)
-    sidecar.write_text("x-aicp-version: 0.0.1\n", encoding="utf-8")
     target.write_text("stale body\n", encoding="utf-8")
+    skills._record_install(target, skills._disk_hashes(skills.SKILLS["commit"], target), h)
+    age_record(target, h)
 
     results = skills.install([cli("codex")], home=h)
 
     assert "Conventional Commits" in target.read_text(encoding="utf-8")
-    assert sidecar.read_text(encoding="utf-8") == f"x-aicp-version: {__version__}\n"
+    assert skills._load_state(h)[str(target)]["version"] == __version__
     assert target.with_name(target.name + ".bak").read_text(encoding="utf-8") == (
         "stale body\n"
     )
