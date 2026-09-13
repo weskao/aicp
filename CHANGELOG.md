@@ -1,85 +1,75 @@
-# Changelog
-
-All notable changes to this project are documented in this file, and this
-project adheres to [Semantic Versioning](https://semver.org/).
-
-## [Unreleased]
+## [0.2.0] - 2026-09-13
 
 ### 🚀 Features
 
-- Added `grok` as the sixth fallback CLI, after `vibe`. Existing
-  `AICP_CLI_ORDER` values remain valid: omitted roster entries are appended in
-  roster order. Grok skills install beneath `$GROK_HOME` when set, otherwise
-  `~/.grok`.
-- The run panel now displays the resolved fallback chain, and the commit panel
-  and final RESULT table identify the CLI that handled `/commit` and
-  `/safe-git-push`.
-- Exact, verified quota/rate-limit output from Codex, Claude, Vibe, or Grok is
-  recorded as `quota`, reported distinctly, and excludes that CLI for the
-  remainder of the current commit/push flow. Copilot and `agy` deliberately
-  have no quota detector; their nonzero exits remain ordinary failures.
+- **cli:** Wire the entry point and bridge config to its consumers
+- **menu:** Add Skills and Doctor rows with inline status
+- **i18n:** Fill the zh-TW catalogue and retire menu.py's _ZH bridge
+- [**breaking**] Support grok and quota-aware fallback
+- **menu:** Display full CLI chain in config panel
+- **skills:** Track installed skills via hashed state file
+- **config:** Migrate config store to ~/.aicp/config.json
+- **menu:** Bold the cursor row in the config panel
+- **runner:** Persist quota exclusion across runs
 
-## [0.1.0] - 2026-09-13
+### 🐛 Bug Fixes
 
-First release. This is a Python port of the zsh `aicp` — a personal tool
-that has lived at `~/scripts/bin/aicp` — not a new tool: the fallback-chain
-order, the timeout/budget formula, the secret-scan patterns, and the
-git-verified result summary all carry over from that original, re-tested
-against a real pytest suite instead of `test_aicp.sh`.
-
-### 🚀 Features
-
-- Fallback chain of five AI CLIs — `copilot` → `agy` → `codex` → `claude` →
-  `vibe` — invoked with the literal prompts `/commit` and `/safe-git-push`;
-  the first CLI to exit 0 wins, missing ones are skipped.
-- Git-verified result summary: every figure (new commits, ahead/behind,
-  in-sync status) is read back from `git` after the CLIs run, never taken
-  from a CLI's own exit code or output. A failed `git fetch` is never read
-  as "already in sync."
-- Pre-commit secret scan (seven fixed patterns, no entropy heuristic) that
-  covers the pending diff, binary-marked tracked files, and every untracked
-  file — since `/commit` stages untracked files itself, before any AI CLI is
-  invoked. A hit aborts the run and only ever prints `file:line` plus the
-  pattern's name.
-- `--undo`: `git reset --soft HEAD^` on the last commit, refusing outright
-  (HEAD untouched, no AI CLI called) on a detached HEAD, no parent commit, an
-  already-pushed commit, or a remote that can't be verified.
-- Cross-platform skills installer for `/commit` and `/safe-git-push`, keyed
-  on each CLI's own config directory rather than its binary name (the `agy`
-  binary reads `~/.gemini`, not `~/.agy`). A file with no aicp version
-  marker is always treated as the user's own and left alone unless a forced
-  install explicitly asks to replace it, backing the original up first.
-- Per-CLI timeout budget: a floor that grows with the size of the pending
-  change, widened (never shrunk) by that CLI's own run history, with a
-  hard override and a ceiling.
-- `.aicprc` configuration layer: parsed line by line, never sourced or
-  eval'd, with a key allowlist, a value charset allowlist, and two knobs
-  (`AICP_TG_SEND`, `AICP_TIMING_LOG`) refused from the file entirely because
-  each one names a path that later gets executed or written.
-- `en` / `zh-TW` message catalogue, resolved via `AICP_LANG`.
-- Telegram notification on a per-CLI timeout, degrading to a printed line
-  when no send script is configured — never raises, never holds up a run
-  that already succeeded.
-- Cross-platform process handling: Ctrl+C reaches a running CLI directly on
-  POSIX, and is forwarded as `CTRL_BREAK_EVENT` on Windows, where every AI
-  CLI's npm `.cmd`/`.bat` shim is resolved and launched through `cmd.exe`
-  explicitly rather than relying on `CreateProcess`'s `PATHEXT` handling
-  (which doesn't cover batch shims at all).
-
-### 🧪 Testing
-
-- pytest suite covering the config loader, the skills installer (against a
-  faked `$HOME`, never the real one), `--undo`'s four refusals, the secret
-  scanner, the timeout budget formula, and the `--config` settings menu's
-  both surfaces (arrow-key TUI and the numbered fallback CI actually drives).
-- CI runs the full suite, `ruff check`, and a packaged-wheel smoke test on
-  macOS, Linux, and Windows alike.
+- **aicp:** Double a trailing backslash when quoting a batch-shim argument
+- **config:** [**breaking**] Deny AICP_CONFIG from .aicprc
+- **cli:** Let AICP_LANG reach the translator, and refuse orphan sub-flags
+- **menu:** Stop the config panel smearing during CLI-order changes
+- **skills:** Reject unsafe record keys before hashing
+- **config:** Normalize key casing between JSON and env
+- **present:** Style config menu group headings
+- **present:** Make config group headings legible
 
 ### 📚 Documentation
 
-- README covering install, the skills setup step and why it exists, the
-  two-command surface (`aicp`, `aicp --config`), `--undo`, the automation
-  escape hatches (`--doctor --json`, `--install-skills --yes`/`--force`),
-  every `AICP_*` configuration knob, the secret scan, and platform notes.
-- `.aicprc.example` with every real knob, commented out, matching its actual
-  default.
+- **todo:** Record the Windows timeout-orphan defect as a known issue
+- Record grok and quota behavior
+- Add demo screenshot to readme
+- Note follow-up security review for skills state store
+- Add aicp performance improvement todo item
+
+### 🧪 Testing
+
+- Add intentional import failures for testing
+- **config:** Cover case-folded and denylisted keys
+
+### ⚙️ Miscellaneous Tasks
+
+- Page Telegram on a failed push
+- Ignore local omc state
+## [0.1.0] - 2026-09-12
+
+### 🚀 Features
+
+- **aicp:** Scaffold Python port with frozen contracts and test harness
+- **skills:** Add cross-platform skills installer
+- **aicp:** Port the git flow, secret scanner, and notifier
+- **aicp:** Port hardened .aicprc layer and the --config/--swap-ai menu
+- **aicp:** Port the timing log with 5MB x 5-file rotation
+- **aicp:** Port the per-CLI timeout budget with history widening
+- **aicp:** Port the fallback-chain runner with signal-safe timeouts
+
+### 🐛 Bug Fixes
+
+- **aicp:** Use CTRL_BREAK_EVENT and fix Windows stub argv logging
+- **skills:** Overwrite a stale .bak on re-forced install
+- **skills:** Never let a backup overwrite an earlier backup
+- **aicp:** Harden the budget and notifier against values that crash a run
+- **packaging:** Ship vendored skills in the wheel
+- **aicp:** Stop the runner leaking children and writing through a symlink
+- **aicp:** Bound the notifier so a hung tg-send.sh cannot block a run
+- **aicp:** Launch npm .cmd shims on Windows instead of failing to start
+
+### 📚 Documentation
+
+- **aicp:** Write README, changelog, and .aicprc.example for 0.1.0
+
+### 🧪 Testing
+
+- **aicp:** Count Path.stat, and exercise the non-TTY guard on a real fd
+- **aicp:** Bound the unreaped-child tests on elapsed time
+- **aicp:** Delete git's read-only objects when tearing down a bare remote
+- **aicp:** Skip the argv-passthrough test on the platform it does not describe
