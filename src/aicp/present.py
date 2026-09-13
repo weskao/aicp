@@ -22,7 +22,7 @@ import unicodedata
 from collections.abc import Sequence
 from pathlib import Path
 
-from ._utils import BOLD, DIM, RESET
+from ._utils import BOLD, DIM, MAGENTA, RESET
 from .i18n import t
 
 __all__ = [
@@ -213,14 +213,27 @@ def render_panel(
     already-colored lines drawn inside the same frame below the rows (a blank
     separator first, then one line per note) — for content that isn't a
     (label, value) pair, such as the config menu's per-row help text and its
-    key-hint footer.
+    key-hint footer. A row whose ``value`` is empty is a section heading
+    (e.g. the config menu's "Steps"/"General"/"Tools" groups) — it spans the
+    full width in bold magenta instead of sharing the label/value columns,
+    matching ai-accounts' own config menu group styling.
     """
-    label_w = max(width(k) for k, _ in rows)
-    value_w = max(width(v) for _, v in rows)
-    inner = max(label_w + value_w + 6, width(title) + 3, *(width(n) + 4 for n in notes))
+    label_w = max(width(k) for k, v in rows if v)
+    value_w = max((width(v) for _, v in rows if v), default=0)
+    inner = max(
+        label_w + value_w + 6,
+        width(title) + 3,
+        *(width(n) + 4 for n in notes),
+        *(width(k) + 4 for k, v in rows if not v),
+    )
     dashes = inner - width(title) - 3
     out = [f"{accent}╭─ {BOLD}{title}{RESET}{accent} {'─' * dashes}╮{RESET}"]
     for i, (label, value) in enumerate(rows):
+        if not value:
+            pad = " " * (inner - 2 - width(label))
+            body = f"  {MAGENTA}{BOLD}{label}{RESET}{pad}"
+            out.append(f"{accent}│{RESET}{body}{accent}│{RESET}")
+            continue
         pad = " " * (label_w - width(label))
         vpad = " " * (value_w - width(value))
         trail = " " * (inner - 4 - label_w - value_w)
