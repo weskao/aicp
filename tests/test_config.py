@@ -159,9 +159,12 @@ def test_non_aicp_key_named_path_is_ignored_and_a_later_key_still_works(cfg):
     assert os.environ["PATH"] == before
 
 
-def test_lowercase_and_mixed_case_keys_are_refused(cfg):
-    path = cfg({"aicp_timeout_base": "10", "Aicp_Timeout_Base": "10"})
-    assert load_config(path) == {}
+def test_lowercase_and_mixed_case_keys_are_folded_to_the_canonical_form(cfg):
+    """``aicp`` writes ``lower_case`` keys on disk (see ``_write_json_private``);
+    a hand-edited or older mixed-case key must resolve exactly like the
+    canonical ``AICP_*`` form the rest of this module works in."""
+    path = cfg({"Aicp_Timeout_Base": "10"})
+    assert load_config(path) == {"AICP_TIMEOUT_BASE": "10"}
 
 
 def test_whitespace_padded_values_are_stripped(cfg):
@@ -235,6 +238,21 @@ def test_denylisted_key_from_config_is_refused_and_announced(
     assert settings.values.get(key) != str(script), "a denied config.json value WON"
     assert not marker.exists(), f"a config.json {key} payload was EXECUTED"
     assert key in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("key", ["aicp_tg_send", "aicp_timing_log", "aicp_config"])
+def test_a_lower_case_denylisted_key_is_still_refused(cfg, marker_payload, capsys, key):
+    """Case-folding a config key to its canonical form (see
+    ``_read_json_object``) must never let a lower_case spelling of a
+    denylisted key slip past :data:`DENYLIST`."""
+    script, marker = marker_payload(key)
+    path = cfg({key: str(script)})
+
+    settings = resolve()
+
+    assert key.upper() not in load_config(path)
+    assert settings.values.get(key.upper()) != str(script)
+    assert not marker.exists(), f"a config.json {key} payload was EXECUTED"
 
 
 def test_denylisted_config_path_is_never_created(cfg, tmp_path, capsys):
