@@ -165,6 +165,22 @@ def test_the_panel_fits_the_terminal_it_draws_on(columns, lines, monkeypatch):
         assert len(frame) < lines, lang
 
 
+def test_the_cursor_row_is_bold_and_no_other_row_is():
+    """The arrow-key TUI's current row must stand out from its neighbours —
+    otherwise the cursor marker is the only signal and DIM flattens it back
+    out (see the render_panel docstring)."""
+    state = MenuState(Path("menu.aicprc"), True, True, "en", list(ROSTER_NAMES))
+
+    frame = _panel(state, selected=2)
+    setting_rows = [line for line in frame if re.search(r"[1-6]\) ", _plain(line))]
+    assert len(setting_rows) == len(ROWS), "every numbered row must be found, no more"
+
+    selected_row = next(line for line in setting_rows if "safe-git-push" in _plain(line))
+    other_rows = [line for line in setting_rows if line != selected_row]
+    assert BOLD in selected_row, "the selected row must carry BOLD"
+    assert all(BOLD not in line for line in other_rows), "only the selected row should be bold"
+
+
 # ── a pick that does not exist changes nothing ───────────────────────────────
 
 

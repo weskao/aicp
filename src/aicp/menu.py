@@ -639,9 +639,15 @@ def _panel(
             if order_value is not None and row.key == "AICP_CLI_ORDER"
             else _fit(row.value(state), value_columns)
         )
+        label = f"{marker} {i}) {_t(state.lang, *row.label)}"
+        # The cursor row stands out by weight, not a new hue: RESET cancels
+        # render_panel's own DIM before BOLD applies, matching the group
+        # headings above and keeping every hue's existing meaning intact.
+        if selected == i:
+            label = f"{RESET}{BOLD}{label}{RESET}"
         rows.append(
             (
-                f"{marker} {i}) {_t(state.lang, *row.label)}",
+                label,
                 f"{row.accent(state)}{value}{RESET}",
             )
         )
