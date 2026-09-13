@@ -3,9 +3,9 @@
 AI commit + push, with a git-verified result summary.
 
 `aicp` runs an AI coding CLI to write your commit message(s) and push, trying
-a fallback chain of five CLIs — `copilot` → `agy` → `codex` → `claude` →
-`vibe` — until one exits 0; anything not installed is skipped. It sends that
-CLI two literal prompts, `/commit` then `/safe-git-push`.
+a fallback chain of six CLIs — `copilot` → `agy` → `codex` → `claude` →
+`vibe` → `grok` — until one exits 0; anything not installed is skipped. It
+sends that CLI two literal prompts, `/commit` then `/safe-git-push`.
 
 The part that matters: **aicp never trusts the CLI's own account of what
 happened.** An AI CLI can print "pushed!" and exit 0 while `/safe-git-push`
@@ -25,7 +25,7 @@ push that never reached the remote.
 
 - Python 3.10 or newer
 - `git`
-- At least one of the five AI CLIs above on `PATH`
+- At least one of the six AI CLIs above on `PATH`
 
 The Python package itself has no runtime dependencies.
 
@@ -59,6 +59,7 @@ Targets follow each CLI's own config directory, not its binary name — `agy`
 | `copilot` | `~/.copilot` | Yes | Yes |
 | `agy` (Gemini CLI) | `~/.gemini` | Yes | Yes |
 | `vibe` | `~/.vibe` | Yes | Yes |
+| `grok` | `$GROK_HOME` when set, otherwise `~/.grok` | Yes | Yes |
 
 `claude` is the one exception: it already resolves `/commit` from its own
 `commands/commit.md`, so aicp never installs a competing definition under
@@ -67,6 +68,20 @@ uses. Every other CLI gets both skills.
 
 A CLI whose config directory doesn't exist at all is skipped, never created —
 aicp only ever installs into a CLI you've actually set up.
+
+### Fallback results and quota limits
+
+The opening run panel prints the resolved chain, and the commit panel and
+final RESULT table name the CLI that handled each step (`—` when skipped).
+When a CLI emits a supported, exact quota/rate-limit signal, aicp records the
+outcome as `quota`, notifies through the usual notification path, and excludes
+that CLI from the rest of that one commit/push flow. The exclusion is not
+persisted: the next `aicp` run starts with the full chain again.
+
+Exact detection is intentionally narrow. It is supported for Codex, Claude,
+Vibe, and Grok only; Copilot and `agy` have no verified quota signature, so a
+nonzero exit from either remains an ordinary failure and is still eligible for
+the next step.
 
 ## Run it
 
@@ -170,7 +185,7 @@ See [`.aicprc.example`](.aicprc.example) for a ready-to-copy template.
 | `AICP_DO_COMMIT` | `1` | Run the `/commit` step. `0` = only push what's already committed. |
 | `AICP_DO_PUSH` | `1` | Run the `/safe-git-push` step. `0` = commit and stop. |
 | `AICP_LANG` | `en` | Message language: `en` or `zh-TW`, everywhere including notifications. |
-| `AICP_CLI_ORDER` | `copilot agy codex claude vibe` | Fallback order. A prefix is enough — any roster name left out is appended after it, in roster order. An unknown or repeated name is refused outright and the default order is used. |
+| `AICP_CLI_ORDER` | `copilot agy codex claude vibe grok` | Fallback order. A prefix is enough — any roster name left out is appended after it, in roster order. An unknown or repeated name is refused outright and the default order is used. |
 | `AICP_TZ` | `Asia/Taipei` | IANA zone name used to render commit timestamps. Anything else falls back to the default. |
 | `AICP_TZ_LABEL` | `UTC+8` | Cosmetic label shown beside those timestamps; not validated. |
 | `AICP_STEP_TIMEOUT` | *(unset)* | Pins every CLI's per-step budget in seconds, skipping the formula and history below entirely. |
@@ -226,9 +241,10 @@ platform is a reduced or best-effort target.
 | Linux | No caveats. |
 | Windows | Every AI CLI ships as an npm `.cmd`/`.bat` shim, which Windows can't launch directly (`CreateProcess` doesn't honor `PATHEXT` and can't run a batch file itself) — aicp resolves the real executable and, for a shim, launches it through `cmd.exe` itself rather than `shell=True`, so no user-controlled text ever builds a shell command line. Ctrl+C is forwarded as `CTRL_BREAK_EVENT` rather than delivered directly (Windows has no "foreground process group" concept), so a CLI that ignores that signal may not stop as cleanly as it would elsewhere. |
 
-On every platform, a per-CLI timeout only signals the CLI process itself, not
-any grandchildren it spawned — the trade-off that keeps Ctrl+C interruptible
-at all (see the zsh original's own notes on `timeout --foreground`).
+On POSIX, a per-CLI timeout signals the CLI process itself, not any
+grandchildren it spawned. On Windows, terminating the intermediate `cmd.exe`
+can orphan the CLI behind the shim; that high-priority defect remains open in
+[TODO.md](TODO.md). Ctrl+C still targets the Windows process group.
 
 ## License
 

@@ -27,10 +27,10 @@
 # Message language: en or zh-TW.
 #AICP_LANG=en
 
-# Fallback CLI order — a prefix of the roster (copilot agy codex claude vibe);
+# Fallback CLI order — a prefix of the roster (copilot agy codex claude vibe grok);
 # any roster name left out is appended automatically, in roster order. An
 # unknown or repeated name is refused outright and the default order is used.
-#AICP_CLI_ORDER=copilot agy codex claude vibe
+#AICP_CLI_ORDER=copilot agy codex claude vibe grok
 
 # Commit-timestamp display timezone (IANA zone name) and its cosmetic label.
 #AICP_TZ=Asia/Taipei

@@ -3,6 +3,22 @@
 All notable changes to this project are documented in this file, and this
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### 🚀 Features
+
+- Added `grok` as the sixth fallback CLI, after `vibe`. Existing
+  `AICP_CLI_ORDER` values remain valid: omitted roster entries are appended in
+  roster order. Grok skills install beneath `$GROK_HOME` when set, otherwise
+  `~/.grok`.
+- The run panel now displays the resolved fallback chain, and the commit panel
+  and final RESULT table identify the CLI that handled `/commit` and
+  `/safe-git-push`.
+- Exact, verified quota/rate-limit output from Codex, Claude, Vibe, or Grok is
+  recorded as `quota`, reported distinctly, and excludes that CLI for the
+  remainder of the current commit/push flow. Copilot and `agy` deliberately
+  have no quota detector; their nonzero exits remain ordinary failures.
+
 ## [0.1.0] - 2026-09-13
 
 First release. This is a Python port of the zsh `aicp` — a personal tool
