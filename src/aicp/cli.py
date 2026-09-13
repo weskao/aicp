@@ -214,7 +214,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config", action="store_true",
-        help=t("help_config", "settings menu: the two steps, the language, the leading CLI"),
+        help=t("help_config", "settings menu: the two steps, the language, the CLI order"),
     )
     parser.add_argument(
         "--doctor", action="store_true",

@@ -143,7 +143,7 @@ CATALOG: dict[str, str] = {
     "config_do_commit": "執行 /commit 階段",
     "config_do_push": "執行 /safe-git-push 階段",
     "config_language": "語言",
-    "config_cli_first": "第一順位 AI CLI",
+    "config_cli_order": "AI CLI 順序",
     # The feature is called Skills in every AI CLI that has it; translating it
     # would only make the row harder to match to what the vendors call it.
     "config_skills": "Skills",
@@ -153,10 +153,11 @@ CATALOG: dict[str, str] = {
     "config_help_commit": "關閉時不 stage 也不 commit，只推送已經 commit 的內容。",
     "config_help_push": "關閉時只做 commit 就停下，分支會領先遠端。",
     "config_help_lang": "所有訊息的語言，包含 Telegram 通知。",
-    "config_help_cli": "最先嘗試；其餘維持原順序排在後面，未安裝的自動跳過。",
+    "config_help_cli": "完整的 fallback 順序，由左到右依序嘗試；←/→ 可輪替順序，未安裝的 CLI 會自動跳過。",
     "config_help_skills": "把 aicp 的 /commit 與 /safe-git-push 裝進每個 AI CLI，你自己的同名檔案一律保留。",
     "config_help_doctor": "平常不會出聲的項目：timeout、被略過的 .aicprc 行、skills、git remote。",
     "config_keys_plain": "1-%s 切換 · q 離開 · 自動儲存",
+    "config_keys_tui": "↑↓ 選擇 · ←→ 切換 · ⏎ 切換／執行 · q/Ctrl-C 離開 · 自動儲存",
     "config_prompt": "請選擇要修改的項目（1-%s，q 離開）：",
     "config_bad_number": "⚠ 請輸入上面列出的項目編號。",
     # ── Skills: the row's inline status, the report, the installer prompts ──
@@ -205,7 +206,7 @@ CATALOG: dict[str, str] = {
     "help_verbose": "即時輸出每個 CLI 的內容，不用轉圈動畫",
     "help_undo": "還原最後一個 commit（git reset --soft HEAD^）；已經在遠端上就拒絕。不呼叫任何 AI CLI",
     "help_swap_ai": "把某個 CLI 移到 fallback 順序的 #1，並存進 .aicprc",
-    "help_config": "設定選單：兩個執行階段、語言、第一順位 CLI",
+    "help_config": "設定選單：兩個執行階段、語言、CLI 順序",
     "help_doctor": "列出每個 CLI 的內建 skill 各自處於什麼狀態",
     "help_json": "--doctor 改輸出 JSON",
     "help_install_skills": "把內建的 skills 安裝到每個已設定的 CLI",

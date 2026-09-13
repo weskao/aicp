@@ -200,16 +200,24 @@ def _reband(text: str, band: str) -> str:
 
 
 def render_panel(
-    rows: Sequence[tuple[str, str]], title: str, accent: str, zebra: bool = False
+    rows: Sequence[tuple[str, str]],
+    title: str,
+    accent: str,
+    zebra: bool = False,
+    notes: Sequence[str] = (),
 ) -> list[str]:
     """Render *rows* (label, value pairs) as a titled rounded-frame panel.
 
     ``zebra`` shades every other row full-width; a single-row panel never
-    bands (nothing to alternate against).
+    bands (nothing to alternate against). ``notes`` are extra full-width,
+    already-colored lines drawn inside the same frame below the rows (a blank
+    separator first, then one line per note) — for content that isn't a
+    (label, value) pair, such as the config menu's per-row help text and its
+    key-hint footer.
     """
     label_w = max(width(k) for k, _ in rows)
     value_w = max(width(v) for _, v in rows)
-    inner = max(label_w + value_w + 6, width(title) + 3)
+    inner = max(label_w + value_w + 6, width(title) + 3, *(width(n) + 4 for n in notes))
     dashes = inner - width(title) - 3
     out = [f"{accent}╭─ {BOLD}{title}{RESET}{accent} {'─' * dashes}╮{RESET}"]
     for i, (label, value) in enumerate(rows):
@@ -220,6 +228,11 @@ def render_panel(
         band = STRIPE if (zebra and len(rows) > 1 and i % 2) else ""
         body = f"{band}{_reband(content, band)}{RESET}" if band else content
         out.append(f"{accent}│{RESET}{body}{accent}│{RESET}")
+    if notes:
+        out.append(f"{accent}│{RESET}{' ' * inner}{accent}│{RESET}")
+        for note in notes:
+            pad = " " * (inner - 2 - width(note))
+            out.append(f"{accent}│{RESET}  {note}{pad}{accent}│{RESET}")
     out.append(f"{accent}╰{'─' * inner}╯{RESET}")
     return out
 

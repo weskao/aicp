@@ -38,14 +38,15 @@ from __future__ import annotations
 import contextlib
 import io
 import sys
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from . import gitflow, i18n, skills
+from . import __version__, gitflow, i18n, skills
 from ._keyreader import is_interactive, read_key, read_line
-from ._utils import BLUE, CYAN, DIM, GREEN, RED, RESET, YELLOW
+from ._utils import BLUE, BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW, color_supported
 
 # _KEY_RE and _SYSTEM_RESOLVED are read, not copied: the doctor reports on the
 # loader's own verdict about a line, so it has to ask with the loader's own key
@@ -516,12 +517,12 @@ ROWS: tuple[Row, ...] = (
     Row(
         key="AICP_CLI_ORDER",
         group=None,
-        label=("config_cli_first", "First AI CLI"),
+        label=("config_cli_order", "AI CLI order"),
         help=(
             "config_help_cli",
-            "Tried first; the rest keep their order behind it. Missing ones are skipped.",
+            "Full fallback order, tried left to right; ←/→ rotates it. Missing CLIs are skipped.",
         ),
-        value=lambda s: s.chain[0],
+        value=lambda s: " → ".join(s.chain),
         accent=lambda _s: CYAN,
         cycle=_rotate_chain,
     ),
@@ -554,20 +555,44 @@ ROWS: tuple[Row, ...] = (
 )
 
 
-def _panel(state: MenuState, selected: int | None = None) -> list[str]:
-    """The framed settings box, numbered for the typed-choice surface."""
+def _panel(state: MenuState, selected: int | None = None, order_flash: bool = False) -> list[str]:
+    """The framed settings box, numbered for the typed-choice surface.
+
+    Always titled with aicp's own version, so a bug report or a screenshot
+    names the build it came from. ``selected`` (only ever given by the
+    arrow-key TUI, which is the one surface with a single current row) adds
+    two more lines inside the frame: that row's own help text — 各項目說明,
+    reusing exactly the ``help`` every row already carries, never a second
+    copy of it — and the arrow-key hint (操作說明). The numbered fallback has
+    no single current row, so it gets only the digit-choice hint instead.
+    """
     rows: list[tuple[str, str]] = []
     for i, row in enumerate(ROWS, start=1):
         if row.group:
             rows.append((_t(state.lang, *row.group), ""))
         marker = "›" if selected == i else " "
+        value = row.value(state)
+        if order_flash and row.key == "AICP_CLI_ORDER":
+            first, separator, rest = value.partition(" → ")
+            value = f"{GREEN}{BOLD}{first}{RESET}{CYAN}{separator}{rest}"
         rows.append(
             (
                 f"{marker} {i}) {_t(state.lang, *row.label)}",
-                f"{row.accent(state)}{row.value(state)}{RESET}",
+                f"{row.accent(state)}{value}{RESET}",
             )
         )
-    return render_panel(rows, _t(state.lang, "config_title", "aicp config"), BLUE)
+    title = f"{_t(state.lang, 'config_title', 'aicp config')} (v{__version__})"
+    if selected is not None:
+        notes = [
+            f"{DIM}{_t(state.lang, *ROWS[selected - 1].help)}{RESET}",
+            "",
+            f"{DIM}{_t(state.lang, 'config_keys_tui', '↑↓ select · ←→ change · ⏎ change/run · q/Ctrl-C quit · saves as you go')}{RESET}",
+        ]
+    else:
+        notes = [
+            f"{DIM}{_t(state.lang, 'config_keys_plain', '1-%s change · q quit · saves as you go', len(ROWS))}{RESET}"
+        ]
+    return render_panel(rows, title, BLUE, notes=notes)
 
 
 def _write(state: MenuState, row: Row, direction: int, stdin: IO[str], out: IO[str]) -> bool:
@@ -615,10 +640,6 @@ def _numbered(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
         for line in _panel(state):
             print(line, file=out)
         print(
-            f"{DIM}{_t(state.lang, 'config_keys_plain', '1-%s change · q quit · saves as you go', len(ROWS))}{RESET}",
-            file=out,
-        )
-        print(
             _t(
                 state.lang,
                 "config_prompt",
@@ -665,6 +686,20 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
             if row.action is not None:
                 # An action prints below the frame; redraw under its output
                 # rather than scrolling back up over what it just said.
+                lines = _panel(state, selected)
+                for line in lines:
+                    print(line, file=out)
+                continue
+            if row.key == "AICP_CLI_ORDER" and color_supported(out):
+                # The promoted CLI flashes once before the settled frame: a
+                # short attention cue without delaying ordinary config changes.
+                out.write(f"\033[{len(lines)}A\033[J")
+                flash_lines = _panel(state, selected, order_flash=True)
+                for line in flash_lines:
+                    print(line, file=out)
+                out.flush()
+                time.sleep(0.16)
+                out.write(f"\033[{len(flash_lines)}A\033[J")
                 lines = _panel(state, selected)
                 for line in lines:
                     print(line, file=out)
