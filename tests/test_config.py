@@ -141,6 +141,14 @@ def test_non_string_values_are_ignored(cfg):
     assert load_config(path) == {"AICP_TZ": "Etc/UTC"}
 
 
+def test_lower_case_on_disk_keys_are_read_case_insensitively(cfg):
+    """The on-disk convention going forward is ``lower_case`` — a
+    hand-written or migrated file in that casing must resolve exactly like
+    the ``AICP_*`` form the rest of this module works in."""
+    path = cfg({"aicp_timeout_base": "10", "aicp_tz": "Etc/UTC"})
+    assert load_config(path) == {"AICP_TIMEOUT_BASE": "10", "AICP_TZ": "Etc/UTC"}
+
+
 def test_non_aicp_key_named_path_is_ignored_and_a_later_key_still_works(cfg):
     before = os.environ["PATH"]
     cfg({"PATH": "/nonexistent-evil-path", "NOT_AICP_TIMEOUT_BASE": "999", "AICP_TIMEOUT_BASE": "10"})
@@ -430,9 +438,9 @@ def test_persist_key_rewrites_in_place_and_preserves_other_keys(tmp_path):
     assert persist_key("AICP_DO_COMMIT", "0", path) is True
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["AICP_DO_COMMIT"] == "0"
-    assert data["AICP_CLI_ORDER"] == "codex copilot agy claude vibe"
-    assert data["AICP_TZ"] == "Etc/UTC"
+    assert data["aicp_do_commit"] == "0"
+    assert data["aicp_cli_order"] == "codex copilot agy claude vibe"
+    assert data["aicp_tz"] == "Etc/UTC"
 
 
 def test_persist_key_merges_when_the_key_is_absent(tmp_path):
@@ -440,15 +448,24 @@ def test_persist_key_merges_when_the_key_is_absent(tmp_path):
     path.write_text(json.dumps({"AICP_TZ": "Etc/UTC"}), encoding="utf-8")
     persist_key("AICP_DO_PUSH", "0", path)
     assert json.loads(path.read_text(encoding="utf-8")) == {
-        "AICP_TZ": "Etc/UTC",
-        "AICP_DO_PUSH": "0",
+        "aicp_tz": "Etc/UTC",
+        "aicp_do_push": "0",
     }
 
 
 def test_persist_key_creates_the_file_when_missing(tmp_path):
     path = tmp_path / "nested" / "new.json"
     persist_key("AICP_LANG", "zh-TW", path)
-    assert json.loads(path.read_text(encoding="utf-8")) == {"AICP_LANG": "zh-TW"}
+    assert json.loads(path.read_text(encoding="utf-8")) == {"aicp_lang": "zh-TW"}
+
+
+def test_persist_key_writes_lower_case_keys(tmp_path):
+    """New keys, like every other write path, land ``lower_case`` on disk —
+    this is the convention any future knob picks up for free."""
+    path = tmp_path / "cased.json"
+    persist_key("AICP_LANG", "en", path)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert list(raw) == ["aicp_lang"]
 
 
 def test_persist_key_leaves_no_temp_file_behind(tmp_path):
@@ -516,8 +533,8 @@ def test_first_resolve_migrates_an_existing_legacy_aicprc_once(fake_home, capsys
     new_path = fake_home / ".aicp" / "config.json"
     assert new_path.exists()
     migrated = json.loads(new_path.read_text(encoding="utf-8"))
-    assert migrated["AICP_LANG"] == "zh-TW"
-    assert migrated["AICP_DO_PUSH"] == "0"
+    assert migrated["aicp_lang"] == "zh-TW"
+    assert migrated["aicp_do_push"] == "0"
     assert legacy.read_text(encoding="utf-8") == "AICP_LANG=zh-TW\nAICP_DO_PUSH=0\n", (
         "the legacy file must be left in place, never deleted or rewritten"
     )

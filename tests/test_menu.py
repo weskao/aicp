@@ -87,8 +87,8 @@ def test_toggles_are_written_immediately(menu):
     code, _out, cfg = menu("1\n2\nq\n")
     assert code == 0
     data = json.loads(cfg.read_text(encoding="utf-8"))
-    assert data["AICP_DO_COMMIT"] == "0"
-    assert data["AICP_DO_PUSH"] == "0"
+    assert data["aicp_do_commit"] == "0"
+    assert data["aicp_do_push"] == "0"
 
 
 def test_the_panel_and_its_persistence_promise_are_rendered(menu):
@@ -99,7 +99,7 @@ def test_the_panel_and_its_persistence_promise_are_rendered(menu):
 
 def test_toggling_a_setting_twice_restores_it(menu):
     _, _, cfg = menu("1\n1\nq\n")
-    assert json.loads(cfg.read_text(encoding="utf-8"))["AICP_DO_COMMIT"] == "1"
+    assert json.loads(cfg.read_text(encoding="utf-8"))["aicp_do_commit"] == "1"
 
 
 def test_a_toggle_survives_into_the_next_resolve(menu):
@@ -109,14 +109,14 @@ def test_a_toggle_survives_into_the_next_resolve(menu):
 
 def test_the_language_pick_repaints_the_menu_in_the_new_language(menu):
     _, out, cfg = menu("3\nq\n")
-    assert json.loads(cfg.read_text(encoding="utf-8"))["AICP_LANG"] == "zh-TW"
+    assert json.loads(cfg.read_text(encoding="utf-8"))["aicp_lang"] == "zh-TW"
     assert "aicp 設定" in out, "the menu must repaint in the language just picked"
 
 
 def test_the_cli_row_rotates_the_chain_and_persists_it(menu):
     _, _out, cfg = menu("4\nq\n")
     rotated = " ".join((*ROSTER_NAMES[1:], ROSTER_NAMES[0]))
-    assert json.loads(cfg.read_text(encoding="utf-8"))["AICP_CLI_ORDER"] == rotated
+    assert json.loads(cfg.read_text(encoding="utf-8"))["aicp_cli_order"] == rotated
 
 
 def test_cli_order_motion_slides_one_name_and_keeps_every_frame_one_width():
@@ -197,9 +197,9 @@ def test_unrelated_config_lines_survive_a_menu_write(menu, tmp_path):
         ),
     )
     data = json.loads(cfg.read_text(encoding="utf-8"))
-    assert data["AICP_TZ"] == "Etc/UTC"
-    assert data["AICP_CLI_ORDER"] == "codex copilot agy claude vibe"
-    assert data["AICP_DO_COMMIT"] == "0"
+    assert data["aicp_tz"] == "Etc/UTC"
+    assert data["aicp_cli_order"] == "codex copilot agy claude vibe"
+    assert data["aicp_do_commit"] == "0"
 
 
 def test_the_menu_leaves_no_temp_file_beside_the_config(menu, tmp_path):
@@ -249,12 +249,12 @@ def test_swap_ai_persists_the_pick_as_the_new_first(swap):
     code, _, cfg = swap("5\n")
     assert code == 0
     expected = "vibe agy codex claude copilot grok"
-    assert json.loads(cfg.read_text(encoding="utf-8"))["AICP_CLI_ORDER"] == expected
+    assert json.loads(cfg.read_text(encoding="utf-8"))["aicp_cli_order"] == expected
 
 
 def test_swap_ai_keeps_every_other_cli_in_the_chain(swap):
     _, _, cfg = swap("5\n")
-    order = json.loads(cfg.read_text(encoding="utf-8"))["AICP_CLI_ORDER"].split()
+    order = json.loads(cfg.read_text(encoding="utf-8"))["aicp_cli_order"].split()
     assert sorted(order) == sorted(ROSTER_NAMES)
 
 

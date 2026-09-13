@@ -1,14 +1,14 @@
 {
-  "AICP_DO_COMMIT": "1",
-  "AICP_DO_PUSH": "1",
-  "AICP_LANG": "en",
-  "AICP_CLI_ORDER": "copilot agy codex claude vibe grok",
-  "AICP_TZ": "Asia/Taipei",
-  "AICP_TZ_LABEL": "UTC+8",
-  "AICP_TIMEOUT_BASE": "180",
-  "AICP_TIMEOUT_PER_FILE": "15",
-  "AICP_TIMEOUT_PER_100L": "5",
-  "AICP_TIMEOUT_MAX": "1800",
-  "AICP_TIMEOUT_HISTORY_LINES": "500",
-  "AICP_TIMEOUT_HISTORY_MULT": "1.3"
+  "aicp_do_commit": "1",
+  "aicp_do_push": "1",
+  "aicp_lang": "en",
+  "aicp_cli_order": "copilot agy codex claude vibe grok",
+  "aicp_tz": "Asia/Taipei",
+  "aicp_tz_label": "UTC+8",
+  "aicp_timeout_base": "180",
+  "aicp_timeout_per_file": "15",
+  "aicp_timeout_per_100l": "5",
+  "aicp_timeout_max": "1800",
+  "aicp_timeout_history_lines": "500",
+  "aicp_timeout_history_mult": "1.3"
 }

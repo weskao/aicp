@@ -175,11 +175,17 @@ set as a real environment variable). Precedence everywhere is
 **environment > `config.json` > hardcoded default**. The file is a JSON
 object, parsed as data and never sourced or eval'd, written atomically and
 owner-only (`0600`) by `--config`/`--swap-ai`; only keys matching
-`AICP_[A-Z0-9_]*` with a **string** value built from letters, digits and
-`` / . _ : @ + - `` survive — everything else (an unknown key, a non-string
-value, a value outside that charset) is skipped individually, so one bad key
-never costs the rest of the file. An invalid *value* for a known key never
-aborts a run — it's reported on stderr and falls back to the default.
+`AICP_[A-Z0-9_]*` case-insensitively with a **string** value built from
+letters, digits and `` / . _ : @ + - `` survive — everything else (an unknown
+key, a non-string value, a value outside that charset) is skipped
+individually, so one bad key never costs the rest of the file. An invalid
+*value* for a known key never aborts a run — it's reported on stderr and
+falls back to the default.
+
+`aicp` always **writes** keys `lower_case` (`aicp_do_commit`, not
+`AICP_DO_COMMIT`) — every key in [`config.example.json`](config.example.json)
+and any new knob added in the future follows the same convention. Reading is
+case-insensitive, so an existing file with `AICP_`-cased keys still works.
 
 A legacy `~/.aicprc` (the pre-JSON `KEY=value` format) is migrated into
 `~/.aicp/config.json` automatically, once, the first time `aicp` runs — the

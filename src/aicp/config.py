@@ -25,8 +25,11 @@ execute config lines they wrote.
 value from running as syntax, and says nothing about a value that is itself
 later used AS a command or a path. Hence three more layers:
 
-1. **Key allowlist** — only ``AICP_[A-Z0-9_]*``. A line naming ``PATH`` is
-   inert text to this loader, not an assignment.
+1. **Key allowlist** — only ``AICP_[A-Z0-9_]*`` (case-insensitively: on disk
+   a key is written ``aicp_do_commit``, matching the environment's
+   ``AICP_DO_COMMIT`` only once case-folded on read — see
+   :func:`_read_json_object`). A line naming ``PATH`` is inert text to this
+   loader, not an assignment.
 2. **Value charset allowlist** — letters, digits and
    ``/ . _ : @ + -`` plus whitespace. ``=`` and ``,`` are excluded because in
    the zsh original a value like ``PATH=0`` reaching an arithmetic context
@@ -181,7 +184,17 @@ def _accept(key: str, value: str) -> str | None:
 
 def _read_json_object(path: Path) -> dict:
     """*path* parsed as a JSON object — ``{}`` when absent, unreadable, not
-    valid JSON, or not an object at the top level."""
+    valid JSON, or not an object at the top level.
+
+    Keys are upper-cased on the way in: on disk (and in whatever a user
+    hand-edits) a key is ``aicp_do_commit``, but every other rule in this
+    module — :data:`DENYLIST`, :data:`_SYSTEM_RESOLVED`, :data:`_KEY_RE`, the
+    environment lookup in :func:`resolve` — is written once, in the
+    ``AICP_DO_COMMIT`` form shared with the environment. Case-folding here,
+    at the one place a JSON object turns into a plain dict, means the rest of
+    the module never has to know the file's on-disk casing differs from the
+    environment's.
+    """
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -190,11 +203,20 @@ def _read_json_object(path: Path) -> dict:
         data = json.loads(text)
     except ValueError:
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    return {key.upper(): value for key, value in data.items()}
 
 
 def _write_json_private(path: Path, data: Mapping[str, str]) -> bool:
     """Atomically overwrite *path* with *data* as owner-only (0600) JSON.
+
+    Keys are lower-cased on the way out — ``AICP_DO_COMMIT`` (the form every
+    caller passes in, matching the environment) is written as
+    ``aicp_do_commit``. This is the only place that happens, so every write
+    path (:func:`persist_key`, the one-time :func:`_maybe_migrate`) gets the
+    lower_case convention for free, including for keys this version has never
+    heard of.
 
     Created 0600 up front rather than chmod'ed afterwards, so the file is
     never briefly readable by another local user, and swapped in with
@@ -206,7 +228,8 @@ def _write_json_private(path: Path, data: Mapping[str, str]) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
-        text = json.dumps(dict(data), indent=2, sort_keys=True) + "\n"
+        lowered = {key.lower(): value for key, value in data.items()}
+        text = json.dumps(lowered, indent=2, sort_keys=True) + "\n"
         try:
             with os.fdopen(
                 os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600),
