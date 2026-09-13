@@ -17,6 +17,7 @@ Local fixtures only — ``tests/conftest.py`` is never edited from here.
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import sys
@@ -85,9 +86,9 @@ def swap(tmp_path, monkeypatch):
 def test_toggles_are_written_immediately(menu):
     code, _out, cfg = menu("1\n2\nq\n")
     assert code == 0
-    lines = cfg.read_text(encoding="utf-8").splitlines()
-    assert "AICP_DO_COMMIT=0" in lines
-    assert "AICP_DO_PUSH=0" in lines
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert data["AICP_DO_COMMIT"] == "0"
+    assert data["AICP_DO_PUSH"] == "0"
 
 
 def test_the_panel_and_its_persistence_promise_are_rendered(menu):
@@ -98,9 +99,7 @@ def test_the_panel_and_its_persistence_promise_are_rendered(menu):
 
 def test_toggling_a_setting_twice_restores_it(menu):
     _, _, cfg = menu("1\n1\nq\n")
-    lines = cfg.read_text(encoding="utf-8").splitlines()
-    assert "AICP_DO_COMMIT=1" in lines
-    assert "AICP_DO_COMMIT=0" not in lines
+    assert json.loads(cfg.read_text(encoding="utf-8"))["AICP_DO_COMMIT"] == "1"
 
 
 def test_a_toggle_survives_into_the_next_resolve(menu):
@@ -110,14 +109,14 @@ def test_a_toggle_survives_into_the_next_resolve(menu):
 
 def test_the_language_pick_repaints_the_menu_in_the_new_language(menu):
     _, out, cfg = menu("3\nq\n")
-    assert "AICP_LANG=zh-TW" in cfg.read_text(encoding="utf-8").splitlines()
+    assert json.loads(cfg.read_text(encoding="utf-8"))["AICP_LANG"] == "zh-TW"
     assert "aicp 設定" in out, "the menu must repaint in the language just picked"
 
 
 def test_the_cli_row_rotates_the_chain_and_persists_it(menu):
     _, _out, cfg = menu("4\nq\n")
     rotated = " ".join((*ROSTER_NAMES[1:], ROSTER_NAMES[0]))
-    assert f"AICP_CLI_ORDER={rotated}" in cfg.read_text(encoding="utf-8").splitlines()
+    assert json.loads(cfg.read_text(encoding="utf-8"))["AICP_CLI_ORDER"] == rotated
 
 
 def test_cli_order_motion_slides_one_name_and_keeps_every_frame_one_width():
@@ -193,12 +192,14 @@ def test_quitting_without_a_pick_writes_nothing(menu):
 def test_unrelated_config_lines_survive_a_menu_write(menu, tmp_path):
     _, _, cfg = menu(
         "1\nq\n",
-        initial="AICP_CLI_ORDER=codex copilot agy claude vibe\nAICP_TZ=Etc/UTC\n",
+        initial=json.dumps(
+            {"AICP_CLI_ORDER": "codex copilot agy claude vibe", "AICP_TZ": "Etc/UTC"}
+        ),
     )
-    lines = cfg.read_text(encoding="utf-8").splitlines()
-    assert "AICP_TZ=Etc/UTC" in lines
-    assert "AICP_CLI_ORDER=codex copilot agy claude vibe" in lines
-    assert "AICP_DO_COMMIT=0" in lines
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert data["AICP_TZ"] == "Etc/UTC"
+    assert data["AICP_CLI_ORDER"] == "codex copilot agy claude vibe"
+    assert data["AICP_DO_COMMIT"] == "0"
 
 
 def test_the_menu_leaves_no_temp_file_beside_the_config(menu, tmp_path):
@@ -247,13 +248,13 @@ def test_swap_ai_on_the_current_first_writes_nothing(swap):
 def test_swap_ai_persists_the_pick_as_the_new_first(swap):
     code, _, cfg = swap("5\n")
     assert code == 0
-    expected = "AICP_CLI_ORDER=vibe agy codex claude copilot grok"
-    assert expected in cfg.read_text(encoding="utf-8").splitlines()
+    expected = "vibe agy codex claude copilot grok"
+    assert json.loads(cfg.read_text(encoding="utf-8"))["AICP_CLI_ORDER"] == expected
 
 
 def test_swap_ai_keeps_every_other_cli_in_the_chain(swap):
     _, _, cfg = swap("5\n")
-    order = cfg.read_text(encoding="utf-8").split("=", 1)[1].split()
+    order = json.loads(cfg.read_text(encoding="utf-8"))["AICP_CLI_ORDER"].split()
     assert sorted(order) == sorted(ROSTER_NAMES)
 
 
@@ -272,7 +273,7 @@ def test_swap_ai_runs_no_ai_cli(swap, stub_cli, call_log):
 
 
 def test_swap_ai_reads_the_chain_from_the_existing_config(swap):
-    _, out, _ = swap("1\n", initial="AICP_CLI_ORDER=vibe codex\n")
+    _, out, _ = swap("1\n", initial=json.dumps({"AICP_CLI_ORDER": "vibe codex"}))
     assert "1) vibe" in out
     assert "already #1" in out
 

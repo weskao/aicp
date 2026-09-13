@@ -1,17 +1,25 @@
-"""The hardened ``.aicprc`` layer: a config file is DATA, and nothing else.
+"""The hardened ``~/.aicp/config.json`` layer: a config file is DATA, and
+nothing else.
 
 Ported from ``_aicp_load_config`` / ``_aicp_persist_key`` in
-``~/scripts/bin/aicp``. That loader's header comment is the design record;
-what follows is the short version of why each control exists, because every
-one of them was added in response to a hole that was verified live, not
-imagined.
+``~/scripts/bin/aicp``, then migrated from ``~/.aicprc`` (KEY=value text) to
+``~/.aicp/config.json`` — a JSON object, written atomically and owner-only —
+matching the storage mechanism the sibling ``ai-accounts`` project uses for
+its own ``~/.ai-accounts/config.json``. Every security control below predates
+that move and is unchanged by it: only the file's serialization envelope
+changed, not what a value is allowed to do. A legacy ``~/.aicprc`` is folded
+in once (see :func:`_maybe_migrate`) and left in place, never deleted.
 
-**Parsed line by line, never sourced or eval'd.** ``source``/``eval`` on a
-config file runs arbitrary code, and ``~/.aicprc`` is exactly the kind of
-file that arrives synced from someone else's dotfiles repo. Only
-``$HOME/.aicprc`` (or ``AICP_CONFIG``) is read; no repo-local file is ever
-consulted, on purpose — merely running ``aicp`` inside someone else's clone
-must never execute config lines they wrote.
+That loader's header comment is the design record; what follows is the short
+version of why each control exists, because every one of them was added in
+response to a hole that was verified live, not imagined.
+
+**Parsed as data, never sourced or eval'd.** ``source``/``eval`` on a config
+file runs arbitrary code, and a config file is exactly the kind of file that
+arrives synced from someone else's dotfiles repo. Only ``$HOME/.aicp/config.json``
+(or ``AICP_CONFIG``) is read; no repo-local file is ever consulted, on
+purpose — merely running ``aicp`` inside someone else's clone must never
+execute config lines they wrote.
 
 "Never eval'd" is necessary but is NOT sufficient on its own: it stops a
 value from running as syntax, and says nothing about a value that is itself
@@ -28,12 +36,12 @@ later used AS a command or a path. Hence three more layers:
 3. **Denylist** (:data:`DENYLIST`) — ``AICP_TG_SEND`` (reaches
    ``bash "$value"``), ``AICP_TIMING_LOG`` (reaches ``mkdir -p``, ``>>``,
    ``mv -f``, ``rm -f``) and ``AICP_CONFIG`` (names the file this loader
-   reads, and the file :func:`persist_key` then ``mkdir -p``s and
-   ``os.replace``s onto) are ENVIRONMENT-VARIABLE ONLY. All three are plain
-   literal paths that sail through the charset allowlist, and all three were
-   real holes. Whoever adds the next knob that flows into an exec path or a
-   path-mutating sink adds its name here — the charset allowlist does not
-   protect against this class at all.
+   reads, and the file :func:`persist_key` then ``mkdir -p``s and atomically
+   replaces) are ENVIRONMENT-VARIABLE ONLY. All three are plain literal paths
+   that sail through the charset allowlist, and all three were real holes.
+   Whoever adds the next knob that flows into an exec path or a path-mutating
+   sink adds its name here — the charset allowlist does not protect against
+   this class at all.
 
    ``AICP_CONFIG`` is the subtlest of the three, because a file naming
    *itself* looks inert: nothing in this module acts on the value. The zsh
@@ -64,6 +72,7 @@ supposed to configure.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -73,6 +82,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .contracts import ROSTER
+
+#: The pre-JSON config file this loader migrates from, once, on first read of
+#: the default (non-``AICP_CONFIG``-overridden) location. Never written back
+#: to and never deleted — see :func:`_maybe_migrate`.
+_LEGACY_NAME = ".aicprc"
 
 __all__ = [
     "DENYLIST",
@@ -133,21 +147,85 @@ class Settings:
 
 
 def config_path(env: Mapping[str, str] | None = None) -> Path:
-    """``AICP_CONFIG`` if set, else ``~/.aicprc``. The only file ever read."""
+    """``AICP_CONFIG`` if set, else ``~/.aicp/config.json``. The only file
+    ever read (a legacy ``~/.aicprc`` is migrated in once — see
+    :func:`_maybe_migrate` — never read directly by this function)."""
     env = os.environ if env is None else env
     override = env.get("AICP_CONFIG")
-    return Path(override) if override else Path(os.path.expanduser("~")) / ".aicprc"
+    return Path(override) if override else Path(os.path.expanduser("~")) / ".aicp" / "config.json"
 
 
-def load_config(path: Path | str | None = None) -> dict[str, str]:
-    """Parse *path* into the ``AICP_*`` values it legitimately supplies.
+def _accept(key: str, value: str) -> str | None:
+    """*value* if *key* legitimately supplies it, else ``None``.
 
-    The file half of :func:`resolve` — no environment is consulted here.
-    Comments, blank lines, lines without ``=``, non-``AICP_`` keys, denied
-    keys and values outside the charset allowlist are all skipped
-    individually: one bad line never costs the rest of the file.
+    Shared by the JSON reader and the legacy line-parser: the key allowlist,
+    denylist, system-resolved exclusion and value charset allowlist are one
+    rule set regardless of which file format supplied the candidate pair.
     """
-    path = config_path() if path is None else Path(path)
+    if not _KEY_RE.match(key):
+        return None
+    if key in DENYLIST:
+        _warn(
+            f"config.json: ignoring {key} (exec-path/path-mutation knob, "
+            "environment-variable only)"
+        )
+        return None
+    if key in _SYSTEM_RESOLVED:
+        _warn(f"config.json: ignoring {key} (resolved from PATH, never from config)")
+        return None
+    value = value.strip()
+    if not _VALUE_RE.match(value):
+        return None
+    return value
+
+
+def _read_json_object(path: Path) -> dict:
+    """*path* parsed as a JSON object — ``{}`` when absent, unreadable, not
+    valid JSON, or not an object at the top level."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_json_private(path: Path, data: Mapping[str, str]) -> bool:
+    """Atomically overwrite *path* with *data* as owner-only (0600) JSON.
+
+    Created 0600 up front rather than chmod'ed afterwards, so the file is
+    never briefly readable by another local user, and swapped in with
+    ``os.replace`` so a crash mid-write cannot truncate the previous
+    contents. Returns ``False`` (never raises) on any ``OSError`` — the
+    callers are a settings menu and a best-effort migration, neither of
+    which may crash the run over a failed write.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+        text = json.dumps(dict(data), indent=2, sort_keys=True) + "\n"
+        try:
+            with os.fdopen(
+                os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write(text)
+            os.replace(tmp, path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        return True
+    except OSError:
+        return False
+
+
+def _load_legacy_lines(path: Path) -> dict[str, str]:
+    """Parse a pre-JSON ``.aicprc`` (KEY=value text) the same way this loader
+    always has — used only by :func:`_maybe_migrate`, once."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -160,23 +238,52 @@ def load_config(path: Path | str | None = None) -> dict[str, str]:
             continue
         key, _, value = line.partition("=")
         key = key.rstrip()
-        if not _KEY_RE.match(key):
-            continue
-        if key in DENYLIST:
-            _warn(
-                f".aicprc: ignoring {key} (exec-path/path-mutation knob, "
-                "environment-variable only)"
-            )
-            continue
-        if key in _SYSTEM_RESOLVED:
-            _warn(f".aicprc: ignoring {key} (resolved from PATH, never from config)")
-            continue
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
-        if not _VALUE_RE.match(value):
+        accepted = _accept(key, value)
+        if accepted is not None:
+            values[key] = accepted
+    return values
+
+
+def _maybe_migrate(path: Path) -> None:
+    """Fold a legacy ``~/.aicprc`` into *path* once, iff *path* is the true
+    default location (no ``AICP_CONFIG`` override) and does not exist yet.
+
+    The legacy file is left in place untouched — this is a one-time copy,
+    never a move, so a config synced across machines via the old path keeps
+    working on whichever one hasn't migrated yet.
+    """
+    if path.exists():
+        return
+    legacy = Path(os.path.expanduser("~")) / _LEGACY_NAME
+    if not legacy.exists():
+        return
+    migrated = _load_legacy_lines(legacy)
+    if _write_json_private(path, migrated):
+        _warn(f"migrated {legacy} to {path} (original left in place)")
+
+
+def load_config(path: Path | str | None = None) -> dict[str, str]:
+    """Parse *path* into the ``AICP_*`` values it legitimately supplies.
+
+    The file half of :func:`resolve` — no environment is consulted here, and
+    no migration is attempted (that is :func:`resolve`'s job, since it alone
+    knows whether ``AICP_CONFIG`` was overridden). Non-string JSON values,
+    non-``AICP_`` keys, denied keys and values outside the charset allowlist
+    are all skipped individually: one bad key never costs the rest of the
+    file.
+    """
+    path = config_path() if path is None else Path(path)
+    raw = _read_json_object(path)
+    values: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(value, str):
             continue
-        values[key] = value
+        accepted = _accept(key, value)
+        if accepted is not None:
+            values[key] = accepted
     return values
 
 
@@ -243,9 +350,11 @@ def resolve_cli_chain(order: str | None) -> Sequence[str]:
 
 
 def resolve(env: Mapping[str, str] | None = None) -> Settings:
-    """Environment over ``.aicprc`` over hardcoded defaults, all validated."""
+    """Environment over ``config.json`` over hardcoded defaults, all validated."""
     env = os.environ if env is None else env
     path = config_path(env)
+    if "AICP_CONFIG" not in env:
+        _maybe_migrate(path)
     values = load_config(path)
     # The environment always wins, key by key — a file can fill a gap, never
     # overwrite something the user exported for this one run. The one
@@ -285,43 +394,18 @@ def timeout_bin() -> str | None:
 
 
 def persist_key(key: str, value: str, path: Path | str | None = None) -> bool:
-    """Rewrite (or append) one ``KEY=value`` line in *path*. False on failure.
+    """Merge ``{key: value}`` into *path*'s JSON object. False on failure.
 
-    Every other line is copied through untouched, so a comment, or a knob
-    this version has never heard of, survives a write from the settings menu.
-    Write-to-temp-then-rename keeps a concurrent reader from ever seeing a
-    half-written line, and the temp file is removed on failure rather than
-    left beside the real config.
+    Every other key already in the file is kept, so a knob this version has
+    never heard of survives a write from the settings menu — the same
+    forward-compatibility promise the old KEY=value writer made, just without
+    the comment lines JSON has no way to represent. Written atomically and
+    owner-only via :func:`_write_json_private`.
 
     Returns a bool rather than raising: the caller is an interactive menu
     that must report a failed write and keep running.
     """
     path = config_path() if path is None else Path(path)
-    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
-    try:
-        try:
-            existing = path.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            existing = []
-        prefix = f"{key}="
-        replaced = False
-        out: list[str] = []
-        for line in existing:
-            if line.startswith(prefix):
-                out.append(f"{key}={value}")
-                replaced = True
-            else:
-                out.append(line)
-        if not replaced:
-            out.append(f"{key}={value}")
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
-        os.replace(tmp, path)
-        return True
-    except OSError:
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return False
+    data = _read_json_object(path)
+    data[key] = value
+    return _write_json_private(path, data)

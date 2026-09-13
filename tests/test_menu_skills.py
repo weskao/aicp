@@ -14,6 +14,7 @@ own. Local fixtures only — ``tests/conftest.py`` is never edited from here.
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 
 import pytest
@@ -153,15 +154,16 @@ def test_the_doctor_row_reports_a_missing_timeout_binary(menu, monkeypatch):
     assert "no time limit" in out, "say what the missing binary actually costs"
 
 
-def test_the_doctor_row_reports_a_dropped_aicprc_line(menu):
+def test_the_doctor_row_reports_a_dropped_config_key(menu):
     _, out, _ = menu(
-        f"{DOCTOR_ROW}\nq\n", initial="AICP_JUNK=va$lue\nAICP_DO_PUSH=1\n"
+        f"{DOCTOR_ROW}\nq\n",
+        initial=json.dumps({"AICP_JUNK": "va$lue", "AICP_DO_PUSH": "1"}),
     )
     assert "AICP_JUNK" in out
 
 
 def test_the_doctor_row_reports_a_denylisted_key(menu):
-    _, out, _ = menu(f"{DOCTOR_ROW}\nq\n", initial="AICP_TG_SEND=/tmp/x.sh\n")
+    _, out, _ = menu(f"{DOCTOR_ROW}\nq\n", initial=json.dumps({"AICP_TG_SEND": "/tmp/x.sh"}))
     assert "AICP_TG_SEND" in out
 
 

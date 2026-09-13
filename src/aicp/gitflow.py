@@ -173,11 +173,11 @@ def diverged(remote: str, branch: str, cwd: Path | str | None = None) -> bool:
 
 
 def config_path() -> Path:
-    """``$AICP_CONFIG``, else ``~/.aicprc`` — resolved at call time (env only;
-    naming the file this port would read is the whole job here, and reading
-    its contents belongs to a different module entirely)."""
+    """``$AICP_CONFIG``, else ``~/.aicp/config.json`` — resolved at call time
+    (env only; naming the file this port would read is the whole job here,
+    and reading its contents belongs to a different module entirely)."""
     override = os.environ.get("AICP_CONFIG")
-    return Path(override) if override else Path.home() / ".aicprc"
+    return Path(override) if override else Path.home() / ".aicp" / "config.json"
 
 
 def preflight(chain: Sequence[str]) -> tuple[bool, list[str]]:

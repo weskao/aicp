@@ -210,7 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--swap-ai", action="store_true",
-        help=t("help_swap_ai", "move a CLI to #1 in the fallback chain and save it to .aicprc"),
+        help=t("help_swap_ai", "move a CLI to #1 in the fallback chain and save it to config.json"),
     )
     parser.add_argument(
         "--config", action="store_true",

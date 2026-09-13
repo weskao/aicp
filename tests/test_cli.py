@@ -442,21 +442,23 @@ def test_no_nudge_when_the_cli_is_not_configured(
 
 
 def test_an_aicprc_timeout_reaches_budget(aicprc, git_repo):
-    aicprc.write_text("AICP_TIMEOUT_BASE=999\n", encoding="utf-8")
+    aicprc.write_text(json.dumps({"AICP_TIMEOUT_BASE": "999"}), encoding="utf-8")
     assert budget.compute("copilot", cwd=git_repo).seconds == budget.FLOOR
     cli.export_settings(config.resolve())
     assert budget.compute("copilot", cwd=git_repo).seconds == 999
 
 
 def test_an_aicprc_timezone_reaches_gitflow(aicprc):
-    aicprc.write_text("AICP_TZ=Asia/Tokyo\n", encoding="utf-8")
+    aicprc.write_text(json.dumps({"AICP_TZ": "Asia/Tokyo"}), encoding="utf-8")
     assert gitflow.resolve_tz() == gitflow.DEFAULT_TZ
     cli.export_settings(config.resolve())
     assert gitflow.resolve_tz() == "Asia/Tokyo"
 
 
 def test_a_real_environment_variable_still_beats_the_file(aicprc, git_repo, monkeypatch):
-    aicprc.write_text("AICP_TZ=Asia/Tokyo\nAICP_TIMEOUT_BASE=999\n", encoding="utf-8")
+    aicprc.write_text(
+        json.dumps({"AICP_TZ": "Asia/Tokyo", "AICP_TIMEOUT_BASE": "999"}), encoding="utf-8"
+    )
     monkeypatch.setenv("AICP_TZ", "Europe/Paris")
     monkeypatch.setenv("AICP_TIMEOUT_BASE", "42")
     cli.export_settings(config.resolve())
@@ -470,7 +472,8 @@ def test_the_bridge_never_imports_a_denylisted_key_from_the_file(aicprc, monkeyp
     monkeypatch.delenv("AICP_TG_SEND", raising=False)
     monkeypatch.delenv("AICP_TIMING_LOG", raising=False)
     aicprc.write_text(
-        "AICP_TG_SEND=/tmp/evil.sh\nAICP_TIMING_LOG=/tmp/evil.log\n", encoding="utf-8"
+        json.dumps({"AICP_TG_SEND": "/tmp/evil.sh", "AICP_TIMING_LOG": "/tmp/evil.log"}),
+        encoding="utf-8",
     )
     cli.export_settings(config.resolve())
     assert "AICP_TG_SEND" not in os.environ
@@ -490,9 +493,10 @@ def test_an_aicprc_cannot_rename_the_file_the_next_write_lands_on(
     the file itself.
     """
     monkeypatch.delenv("AICP_CONFIG", raising=False)
-    real = pinned_environment / ".aicprc"
+    real = pinned_environment / ".aicp" / "config.json"
+    real.parent.mkdir(parents=True)
     hijacked = tmp_path / "hijacked" / "authorized_keys"
-    real.write_text(f"AICP_CONFIG={hijacked}\n", encoding="utf-8")
+    real.write_text(json.dumps({"AICP_CONFIG": str(hijacked)}), encoding="utf-8")
     assert config.config_path() == real  # the file really is the one being read
 
     cli.export_settings(config.resolve())
@@ -510,7 +514,7 @@ def test_an_aicprc_language_actually_reaches_the_translator(aicprc):
     """Regression: ``i18n.LANGUAGE`` is resolved at import — strictly before
     the bridge can run — so exporting ``AICP_LANG`` alone left every run
     English no matter what the ``--config`` menu had written."""
-    aicprc.write_text("AICP_LANG=zh-TW\n", encoding="utf-8")
+    aicprc.write_text(json.dumps({"AICP_LANG": "zh-TW"}), encoding="utf-8")
     assert i18n.LANGUAGE == "en"
     cli.export_settings(config.resolve())
     assert i18n.LANGUAGE == "zh-TW"
@@ -519,7 +523,7 @@ def test_an_aicprc_language_actually_reaches_the_translator(aicprc):
 def test_a_real_language_environment_variable_still_beats_the_file(
     aicprc, monkeypatch
 ):
-    aicprc.write_text("AICP_LANG=zh-TW\n", encoding="utf-8")
+    aicprc.write_text(json.dumps({"AICP_LANG": "zh-TW"}), encoding="utf-8")
     monkeypatch.setenv("AICP_LANG", "en")
     cli.export_settings(config.resolve())
     assert i18n.LANGUAGE == "en"
@@ -528,7 +532,7 @@ def test_a_real_language_environment_variable_still_beats_the_file(
 def test_a_real_run_applies_the_bridge(run, aicprc, git_repo_synced, stub_cli):
     stub_cli()
     repo, _bare = git_repo_synced
-    aicprc.write_text("AICP_TZ=Asia/Tokyo\n", encoding="utf-8")
+    aicprc.write_text(json.dumps({"AICP_TZ": "Asia/Tokyo"}), encoding="utf-8")
     assert run(repo) == 0
     assert gitflow.resolve_tz() == "Asia/Tokyo"
 

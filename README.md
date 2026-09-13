@@ -169,18 +169,23 @@ timestamps only; secret values can never be read back, by you or by CI logs.
 
 ## Configuration
 
-`.aicprc` lives at `~/.aicprc` (override the path itself with `AICP_CONFIG`,
-which — being the thing that names the file — can only be set as a real
-environment variable). Precedence everywhere is **environment > `.aicprc` >
-hardcoded default**. The file is parsed line by line, never sourced or
-eval'd, and only `KEY=value` lines matching `AICP_[A-Z0-9_]*` with a value
-built from letters, digits and `` / . _ : @ + - `` survive; everything else
-(a bad line, an unknown key, a value outside that charset) is skipped
-individually, so one bad line never costs the rest of the file. An invalid
-*value* for a known key never aborts a run — it's reported on stderr and
-falls back to the default.
+The config file lives at `~/.aicp/config.json` (override the path itself
+with `AICP_CONFIG`, which — being the thing that names the file — can only be
+set as a real environment variable). Precedence everywhere is
+**environment > `config.json` > hardcoded default**. The file is a JSON
+object, parsed as data and never sourced or eval'd, written atomically and
+owner-only (`0600`) by `--config`/`--swap-ai`; only keys matching
+`AICP_[A-Z0-9_]*` with a **string** value built from letters, digits and
+`` / . _ : @ + - `` survive — everything else (an unknown key, a non-string
+value, a value outside that charset) is skipped individually, so one bad key
+never costs the rest of the file. An invalid *value* for a known key never
+aborts a run — it's reported on stderr and falls back to the default.
 
-See [`.aicprc.example`](.aicprc.example) for a ready-to-copy template.
+A legacy `~/.aicprc` (the pre-JSON `KEY=value` format) is migrated into
+`~/.aicp/config.json` automatically, once, the first time `aicp` runs — the
+old file is left in place untouched, never deleted or rewritten.
+
+See [`config.example.json`](config.example.json) for a ready-to-copy template.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
@@ -198,17 +203,17 @@ See [`.aicprc.example`](.aicprc.example) for a ready-to-copy template.
 | `AICP_TIMEOUT_HISTORY_LINES` | `500` | How many recent timing-log rows are scanned when widening a budget from history. |
 | `AICP_TIMEOUT_HISTORY_MULT` | `1.3` | Multiplier applied to a CLI's largest successful run when that exceeds the formula. |
 | `AICP_SKIP_SECRET_SCAN` | *(unset)* | `1` bypasses the pre-commit secret scan for one run — the documented escape for a false positive. |
-| `AICP_CONFIG` | `~/.aicprc` | Which file this loader reads. Environment-variable only — a file can't rename itself. |
-| `AICP_TG_SEND` | `~/.claude/scripts/tg-send.sh` | The Telegram send script run at the end of a notification. **Environment-variable only** — refused if set in `.aicprc`. |
-| `AICP_TIMING_LOG` | `~/.aicp/timing.log` | Where per-CLI timing rows are appended (rotated at 5 MB, 5 kept). **Environment-variable only** — refused if set in `.aicprc`. |
+| `AICP_CONFIG` | `~/.aicp/config.json` | Which file this loader reads. Environment-variable only — a file can't rename itself. |
+| `AICP_TG_SEND` | `~/.claude/scripts/tg-send.sh` | The Telegram send script run at the end of a notification. **Environment-variable only** — refused if set in `config.json`. |
+| `AICP_TIMING_LOG` | `~/.aicp/timing.log` | Where per-CLI timing rows are appended (rotated at 5 MB, 5 kept). **Environment-variable only** — refused if set in `config.json`. |
 
-`AICP_TG_SEND` and `AICP_TIMING_LOG` are refused from `.aicprc` on purpose:
-both name a path that then gets *executed* (`AICP_TG_SEND`, run as a script)
-or *written and rotated* (`AICP_TIMING_LOG`, `mkdir -p` / `>>` / a rename). A
-`.aicprc` is exactly the kind of file that can arrive synced from someone
-else's dotfiles repo, so anything that becomes a command or a filesystem
-sink stays a real-environment-only decision — set it in your shell, not the
-file.
+`AICP_TG_SEND` and `AICP_TIMING_LOG` are refused from `config.json` on
+purpose: both name a path that then gets *executed* (`AICP_TG_SEND`, run as a
+script) or *written and rotated* (`AICP_TIMING_LOG`, `mkdir -p` / `>>` / a
+rename). A config file is exactly the kind of thing that can arrive synced
+from someone else's dotfiles repo, so anything that becomes a command or a
+filesystem sink stays a real-environment-only decision — set it in your
+shell, not the file.
 
 ## Safety
 

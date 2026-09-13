@@ -20,10 +20,10 @@ import threading
 from dataclasses import replace
 from pathlib import Path
 
-test fail import pytest
+import pytest
 
 from aicp import __version__, skills
-test fail from aicp.contracts import (
+from aicp.contracts import (
     ROSTER,
     SKILL_VERSION_MARKER,
     SKILL_VERSION_SUFFIX,

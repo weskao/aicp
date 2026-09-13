@@ -57,6 +57,7 @@ from .config import (
     _SYSTEM_RESOLVED,
     DENYLIST,
     Settings,
+    _read_json_object,
     load_config,
     persist_key,
     resolve,
@@ -327,29 +328,22 @@ def _skills_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
 
 
 def _config_health(state: MenuState) -> list[tuple[str, str]]:
-    """Which ``.aicprc`` lines the loader refused — otherwise entirely silent.
+    """Which ``config.json`` keys the loader refused — otherwise entirely
+    silent.
 
     Derived from :func:`~aicp.config.load_config`'s own verdict rather than a
     second copy of its rules: a key that is in the file and not in what it
-    returned is, by definition, a line that did not take effect.
+    returned is, by definition, a key that did not take effect.
     """
-    try:
-        text = state.path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    if not state.path.exists():
         return [(_OK, _t(state.lang, "health_no_config", "no %s yet — built-in defaults apply", state.path))]
+    raw = _read_json_object(state.path)
     # The loader announces a denied key on stderr as it goes; this report is
     # about to say the same thing in the panel, so the second copy is noise —
     # and the panel repaints, which would print it again on every keypress.
     with contextlib.redirect_stderr(io.StringIO()):
         accepted = load_config(state.path)
-    refused: list[str] = []
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key = line.partition("=")[0].rstrip()
-        if _KEY_RE.match(key) and key not in accepted and key not in refused:
-            refused.append(key)
+    refused = [key for key in raw if _KEY_RE.match(key) and key not in accepted]
     if not refused:
         return [(_OK, _t(state.lang, "health_config_ok", "%s: %s setting(s) read", state.path.name, len(accepted)))]
     return [
@@ -555,7 +549,7 @@ ROWS: tuple[Row, ...] = (
         label=("config_doctor", "Health check"),
         help=(
             "config_help_doctor",
-            "What is otherwise silent: timeout, skipped .aicprc lines, skills, git remote.",
+            "What is otherwise silent: timeout, skipped config.json keys, skills, git remote.",
         ),
         value=_doctor_value,
         accent=lambda s: YELLOW if _WARN in _doctor_value(s) else GREEN,
