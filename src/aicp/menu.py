@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -45,7 +46,7 @@ from pathlib import Path
 from typing import IO
 
 from . import __version__, gitflow, i18n, skills
-from ._keyreader import is_interactive, read_key, read_line
+from ._keyreader import is_interactive, key_session, pending, read_key, read_line
 from ._utils import BLUE, BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW, color_supported
 
 # _KEY_RE and _SYSTEM_RESOLVED are read, not copied: the doctor reports on the
@@ -62,11 +63,19 @@ from .config import (
     timeout_bin,
 )
 from .contracts import ROSTER
-from .present import render_panel
+from .present import render_panel, width
 
 __all__ = ["ROWS", "MenuState", "Row", "config_menu", "swap_ai"]
 
 _ROSTER_NAMES: tuple[str, ...] = tuple(c.name for c in ROSTER)
+#: What the AI CLI order row puts between two names, and the unit the order
+#: animation slides by — one name plus one separator is exactly one rotation.
+_SEPARATOR = " → "
+_ELLIPSIS = "…"
+_MIN_VALUE_COLUMNS = 12
+#: Long enough to read as motion rather than a jump, short enough that it is
+#: over before a held-down arrow key feels laggy.
+_MOTION_SECONDS = 0.15
 
 
 def _t(lang: str, msgid: str, english: str, *args: object) -> str:
@@ -522,7 +531,7 @@ ROWS: tuple[Row, ...] = (
             "config_help_cli",
             "Full fallback order, tried left to right; ←/→ rotates it. Missing CLIs are skipped.",
         ),
-        value=lambda s: " → ".join(s.chain),
+        value=lambda s: _SEPARATOR.join(s.chain),
         accent=lambda _s: CYAN,
         cycle=_rotate_chain,
     ),
@@ -555,7 +564,60 @@ ROWS: tuple[Row, ...] = (
 )
 
 
-def _panel(state: MenuState, selected: int | None = None, order_flash: bool = False) -> list[str]:
+def _terminal_size(out: IO[str]) -> os.terminal_size:
+    """The terminal *out* draws on; 80×24 when it is not one.
+
+    Measured from the stream being written to rather than through
+    ``shutil.get_terminal_size``: the repaint arithmetic below is only
+    correct against the surface it actually draws on, and a captured stdout
+    (a pipe, this project's suite) has to resolve the same way on every run
+    instead of inheriting whatever terminal happened to launch it.
+    """
+    try:
+        return os.get_terminal_size(out.fileno())
+    except (AttributeError, OSError, ValueError):
+        return os.terminal_size((80, 24))
+
+
+def _fit(text: str, columns: int) -> str:
+    """*text* clipped to *columns* visible columns, ending in … when clipped."""
+    if width(text) <= columns:
+        return text
+    kept: list[str] = []
+    used = 0
+    for char in text:
+        used += width(char)
+        if used > columns - 1:
+            break
+        kept.append(char)
+    return "".join(kept) + _ELLIPSIS
+
+
+def _fit_columns(state: MenuState, out: IO[str]) -> tuple[int, int]:
+    """``(frame, value)`` column budgets for a panel that fits this terminal.
+
+    The panel sizes itself to its content, and that content is routinely
+    wider than the 80 columns a terminal gives by default: the Chinese help
+    line and the six-CLI chain put it at 87-89. A frame wider than the
+    terminal is not merely ugly — every one of its lines wraps, so a frame
+    with 15 lines occupies 30 rows, the repaint below walks the cursor up 15
+    and lands in the middle of its own last frame, and each keypress leaves
+    another half-frame behind until the screen is a column of borders. So
+    the content is fitted to the terminal first and the repaint arithmetic
+    stays exact.
+    """
+    frame = _terminal_size(out).columns - 2
+    labels = [f"  {i}) {_t(state.lang, *row.label)}" for i, row in enumerate(ROWS, start=1)]
+    labels += [_t(state.lang, *row.group) for row in ROWS if row.group]
+    return frame, max(frame - 6 - max(width(label) for label in labels), _MIN_VALUE_COLUMNS)
+
+
+def _panel(
+    state: MenuState,
+    selected: int | None = None,
+    out: IO[str] | None = None,
+    order_value: str | None = None,
+) -> list[str]:
     """The framed settings box, numbered for the typed-choice surface.
 
     Always titled with aicp's own version, so a bug report or a screenshot
@@ -565,16 +627,24 @@ def _panel(state: MenuState, selected: int | None = None, order_flash: bool = Fa
     reusing exactly the ``help`` every row already carries, never a second
     copy of it — and the arrow-key hint (操作說明). The numbered fallback has
     no single current row, so it gets only the digit-choice hint instead.
+
+    ``order_value`` swaps in an already-rendered motion frame for the AI CLI
+    order row (see :func:`_order_motion`); everything else about the panel is
+    drawn exactly as it is at rest, so a frame mid-slide is the same shape as
+    the frame it settles into.
     """
+    out = out if out is not None else sys.stdout
+    frame_columns, value_columns = _fit_columns(state, out)
     rows: list[tuple[str, str]] = []
     for i, row in enumerate(ROWS, start=1):
         if row.group:
             rows.append((_t(state.lang, *row.group), ""))
         marker = "›" if selected == i else " "
-        value = row.value(state)
-        if order_flash and row.key == "AICP_CLI_ORDER":
-            first, separator, rest = value.partition(" → ")
-            value = f"{GREEN}{BOLD}{first}{RESET}{CYAN}{separator}{rest}"
+        value = (
+            order_value
+            if order_value is not None and row.key == "AICP_CLI_ORDER"
+            else _fit(row.value(state), value_columns)
+        )
         rows.append(
             (
                 f"{marker} {i}) {_t(state.lang, *row.label)}",
@@ -583,21 +653,36 @@ def _panel(state: MenuState, selected: int | None = None, order_flash: bool = Fa
         )
     title = f"{_t(state.lang, 'config_title', 'aicp config')} (v{__version__})"
     if selected is not None:
-        notes = [
-            f"{DIM}{_t(state.lang, *ROWS[selected - 1].help)}{RESET}",
+        texts = [
+            _t(state.lang, *ROWS[selected - 1].help),
             "",
-            f"{DIM}{_t(state.lang, 'config_keys_tui', '↑↓ select · ←→ change · ⏎ change/run · q/Ctrl-C quit · saves as you go')}{RESET}",
+            _t(state.lang, "config_keys_tui", "↑↓ select · ←→ change · ⏎ change/run · q/Ctrl-C quit · saves as you go"),
         ]
     else:
-        notes = [
-            f"{DIM}{_t(state.lang, 'config_keys_plain', '1-%s change · q quit · saves as you go', len(ROWS))}{RESET}"
-        ]
+        texts = [_t(state.lang, "config_keys_plain", "1-%s change · q quit · saves as you go", len(ROWS))]
+    notes = [f"{DIM}{_fit(text, frame_columns - 4)}{RESET}" for text in texts]
+    # A frame taller than the terminal cannot be repainted in place either —
+    # its top scrolls off, and the cursor can never walk back up to it. The
+    # notes are what a short window gives up, help text first: the key hints
+    # are the line someone stuck in an unfamiliar menu actually needs.
+    while notes and len(rows) + len(notes) + 4 > _terminal_size(out).lines:
+        notes.pop(0)
     return render_panel(rows, title, BLUE, notes=notes)
 
 
-def _write(state: MenuState, row: Row, direction: int, stdin: IO[str], out: IO[str]) -> bool:
+def _write(
+    state: MenuState,
+    row: Row,
+    direction: int,
+    stdin: IO[str],
+    out: IO[str],
+    typed: Callable[[], contextlib.AbstractContextManager[None]] = contextlib.nullcontext,
+) -> bool:
     if row.action is not None:
-        row.action(state, stdin, out)
+        # An action row asks its questions with read_line, which needs the
+        # line discipline the arrow-key session holds suspended.
+        with typed():
+            row.action(state, stdin, out)
         return True  # an action row has nothing to persist
     if row.cycle is None:  # a row is either cycle or action, never neither
         return True
@@ -637,7 +722,7 @@ def config_menu(
 def _numbered(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
     """Typed-choice surface. EOF is "quit" — never a block, so CI is safe."""
     while True:
-        for line in _panel(state):
+        for line in _panel(state, out=out):
             print(line, file=out)
         print(
             _t(
@@ -662,54 +747,197 @@ def _numbered(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
         print(file=out)
 
 
+def _tape(before: Sequence[str], after: Sequence[str]) -> tuple[str, int, int]:
+    """The order before and after a rotation, laid end to end, plus the window
+    offsets that read as each of them.
+
+    A rotation moves every name along by one slot and wraps the one that
+    falls off the end back round to the other side. Writing the name that
+    wraps next to the order it left makes a strip where **one window of it is
+    always a real order**, and sliding that window by one name turns the old
+    order into the new one — every other name displaced on the way, the
+    wrapping one leaving by one edge and arriving at the other. That is the
+    entire animation: one strip, one offset, no per-name bookkeeping.
+    """
+    if after[0] == before[1]:  # → : the chain walks left, the head wraps to the tail
+        return _SEPARATOR.join((*before, before[0])), 0, width(before[0] + _SEPARATOR)
+    return _SEPARATOR.join((after[0], *before)), width(after[0] + _SEPARATOR), 0
+
+
+def _lit(piece: str, bright: Sequence[bool], accent: str) -> str:
+    """*piece* with the *bright* columns picked out, back to *accent* after."""
+    parts: list[str] = []
+    on = False
+    for char, hot in zip(piece, bright):
+        if hot != on:
+            parts.append(f"{GREEN}{BOLD}" if hot else f"{RESET}{accent}")
+            on = hot
+        parts.append(char)
+    return "".join(parts) + (f"{RESET}{accent}" if on else "")
+
+
+def _eased(progress: float) -> float:
+    """How much of the slide's time is spent by the time it is *progress*
+    along. A shallow curve: the chain leaves briskly and eases into its new
+    order instead of stopping dead on the last column."""
+    return 1 - (1 - progress) ** (2 / 3)
+
+
+def _order_motion(
+    before: Sequence[str], after: Sequence[str], columns: int, accent: str
+) -> list[tuple[str, float]]:
+    """The chain sliding *before* → *after*: one frame per column it travels,
+    each paired with how long to hold it.
+
+    One column per frame is what makes this read as motion rather than as a
+    jump, so the easing lives in the timing and not in the distance — a
+    curve applied to the offset instead would round several frames onto the
+    same column and stall there. Every frame is exactly *columns* wide, so
+    the panel never changes shape mid-slide.
+    """
+    tape, start, end = _tape(before, after)
+    bright = [False] * len(tape)
+    promoted = after[0]
+    at = tape.find(promoted)
+    while at != -1:  # the wrapping name is on the strip twice — light both
+        bright[at : at + len(promoted)] = [True] * len(promoted)
+        at = tape.find(promoted, at + len(promoted))
+    travel = abs(end - start)
+    step = 1 if end > start else -1
+    frames = []
+    for moved in range(travel + 1):
+        offset = start + step * moved
+        # The settled frame is the last one and is held by whatever comes
+        # next, not by the slide.
+        held = (
+            _MOTION_SECONDS * (_eased((moved + 1) / travel) - _eased(moved / travel))
+            if moved < travel
+            else 0.0
+        )
+        frames.append((_lit(tape[offset : offset + columns], bright[offset:], accent), held))
+    return frames
+
+
+def _order_line() -> int:
+    """Which line of :func:`_panel`'s output carries the AI CLI order row.
+
+    Derived from :data:`ROWS` rather than counted by hand, for the same
+    reason nothing else in this module hardcodes a row number: the panel is
+    one title line, then each row preceded by its group heading when it
+    opens one.
+    """
+    line = 1
+    for row in ROWS:
+        if row.group:
+            line += 1
+        if row.key == "AICP_CLI_ORDER":
+            return line
+        line += 1
+    raise AssertionError("no AICP_CLI_ORDER row")  # pragma: no cover - ROWS is a constant
+
+
+def _animates(lines: list[str], out: IO[str]) -> bool:
+    """Whether motion can be drawn at all.
+
+    Colour, and a frame that is not wrapping: a wrapped line cannot be
+    rewritten on its own (``\\033[K`` clears one screen row, not one logical
+    line), and a terminal too narrow to hold the panel has a redraw problem
+    to fix before it has an animation to watch.
+    """
+    return color_supported(out) and _frame_rows(lines, out) == len(lines)
+
+
+def _repaint_line(out: IO[str], lines: list[str], index: int, text: str) -> None:
+    """Rewrite one line of the frame already on screen, leaving the rest be.
+
+    An animation step changes one row, and erasing the whole frame to redraw
+    it 12 times a second is what makes motion flicker — so the cursor walks
+    up to just that line, overwrites it, and comes straight back. Nothing is
+    scrolled: no newline is ever written.
+    """
+    up = _frame_rows(lines[index:], out)
+    out.write(f"\033[{up}A\r\033[K{text}\033[{up}B\r")
+
+
+def _frame_rows(lines: list[str], out: IO[str]) -> int:
+    """Physical terminal rows *lines* occupies once wrapped at the real
+    terminal width.
+
+    Not the same as ``len(lines)``: a row's visible width (CJK glyphs count
+    two columns) routinely exceeds an 80-column terminal, so the terminal
+    itself wraps that one logical line into two on-screen rows. Erasing by
+    ``len(lines)`` then moves the cursor up too few rows, leaves the old
+    frame's wrapped tail on screen, and the next redraw piles another tail
+    on top of that one — the "whole panel smears down the screen" bug.
+    """
+    columns = max(_terminal_size(out).columns, 1)
+    return sum(-(-width(line) // columns) or 1 for line in lines)
+
+
 def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
     """Arrow-key surface. Repaints in place by walking back up the frame it
     just drew; ``\\033[J`` erases to the end of the screen because switching
     to a language with narrower rows would otherwise leave the previous,
     wider frame's right-hand border on screen as a second column of │."""
     selected = 1
-    lines = _panel(state, selected)
+    lines = _panel(state, selected, out)
     for line in lines:
         print(line, file=out)
-    while True:
-        key = read_key(stdin, out)
-        if key == "quit":
-            return 0
-        if key == "up":
-            selected = selected - 1 if selected > 1 else len(ROWS)
-        elif key == "down":
-            selected = selected + 1 if selected < len(ROWS) else 1
-        elif key in ("left", "right", "enter"):
-            row = ROWS[selected - 1]
-            if not _write(state, row, -1 if key == "left" else 1, stdin, out):
-                return 1
-            if row.action is not None:
-                # An action prints below the frame; redraw under its output
-                # rather than scrolling back up over what it just said.
-                lines = _panel(state, selected)
+    try:
+        with key_session(stdin, out) as typed:
+            while True:
+                key = read_key(stdin, out)
+                if key == "quit":
+                    return 0
+                if key == "up":
+                    selected = selected - 1 if selected > 1 else len(ROWS)
+                elif key == "down":
+                    selected = selected + 1 if selected < len(ROWS) else 1
+                elif key in ("left", "right", "enter"):
+                    row = ROWS[selected - 1]
+                    before = list(state.chain)
+                    if not _write(state, row, -1 if key == "left" else 1, stdin, out, typed):
+                        return 1
+                    if row.action is not None:
+                        # An action prints below the frame; redraw under its
+                        # output rather than scrolling back up over what it
+                        # just said.
+                        lines = _panel(state, selected, out)
+                        for line in lines:
+                            print(line, file=out)
+                        continue
+                    if row.key == "AICP_CLI_ORDER" and _animates(lines, out):
+                        # The whole chain slides one name over, so the change
+                        # is watched rather than noticed after the fact. Only
+                        # the order row is rewritten per step — the rest of
+                        # the frame is already right, and redrawing it is
+                        # what flickers.
+                        index = _order_line()
+                        columns = width(
+                            _fit(_SEPARATOR.join(state.chain), _fit_columns(state, out)[1])
+                        )
+                        for frame, held in _order_motion(
+                            before, state.chain, columns, row.accent(state)
+                        ):
+                            lines = _panel(state, selected, out, order_value=frame)
+                            _repaint_line(out, lines, index, lines[index])
+                            out.flush()
+                            if pending(stdin):
+                                break  # a key is already waiting; land on the
+                                # settled frame now rather than making it queue
+                                # behind a slide nobody is still watching
+                            time.sleep(held)
+                else:
+                    continue
+                out.write(f"\033[{_frame_rows(lines, out)}A\033[J")
+                lines = _panel(state, selected, out)
                 for line in lines:
                     print(line, file=out)
-                continue
-            if row.key == "AICP_CLI_ORDER" and color_supported(out):
-                # The promoted CLI flashes once before the settled frame: a
-                # short attention cue without delaying ordinary config changes.
-                out.write(f"\033[{len(lines)}A\033[J")
-                flash_lines = _panel(state, selected, order_flash=True)
-                for line in flash_lines:
-                    print(line, file=out)
-                out.flush()
-                time.sleep(0.16)
-                out.write(f"\033[{len(flash_lines)}A\033[J")
-                lines = _panel(state, selected)
-                for line in lines:
-                    print(line, file=out)
-                continue
-        else:
-            continue
-        out.write(f"\033[{len(lines)}A\033[J")
-        lines = _panel(state, selected)
-        for line in lines:
-            print(line, file=out)
+    except KeyboardInterrupt:
+        # cbreak leaves Ctrl+C a signal rather than a byte, and quitting a
+        # menu that saves as it goes has nothing to roll back.
+        print(file=out)
+        return 0
 
 
 def swap_ai(

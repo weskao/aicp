@@ -19,15 +19,21 @@ Key names returned are semantic (``up``/``down``/``left``/``right``/
 
 from __future__ import annotations
 
+import contextlib
 import sys
+from collections.abc import Callable, Iterator
 from typing import IO
 
-__all__ = ["is_interactive", "read_key", "read_line"]
+__all__ = ["is_interactive", "key_session", "pending", "read_key", "read_line"]
+
+#: What :func:`key_session` hands back: call it to wrap a prompt that reads a
+#: typed line, which needs the line discipline the session suspends.
+_Typed = Callable[[], "contextlib.AbstractContextManager[None]"]
 
 # Windows sends arrows as a two-byte sequence introduced by one of these.
 _WIN_PREFIXES = ("\x00", "\xe0")
 _WIN_ARROWS = {"H": "up", "P": "down", "K": "left", "M": "right"}
-_VT_ARROWS = {"A": "up", "B": "down", "C": "left", "D": "right"}
+_VT_ARROWS = {"A": "up", "B": "down", "C": "right", "D": "left"}
 
 
 def is_interactive(stdin: IO[str] | None = None, stdout: IO[str] | None = None) -> bool:
@@ -119,6 +125,74 @@ def _from_char(ch: str) -> str:
     if ch in ("y", "Y"):
         return "yes"
     return "other"
+
+
+@contextlib.contextmanager
+def key_session(stdin: IO[str], stdout: IO[str]) -> Iterator[_Typed]:
+    """Hold the terminal in cbreak mode for a whole arrow-key session.
+
+    Raw mode per keypress leaves the terminal echoing **between** reads, and
+    a menu that animates spends real time between reads: a key pressed while
+    a frame is moving is echoed onto the screen by the terminal driver
+    itself, an Enter echoes a newline that pushes the whole frame down a
+    row, and every repaint after it walks the cursor up to the wrong place —
+    stacking a fresh header on screen for each one. That is the "hold Enter
+    and the panel multiplies" bug, and no amount of care in the drawing code
+    can fix it, because it is not the drawing code writing.
+
+    cbreak and not raw: ``tty.setraw`` also turns off output processing, and
+    a panel printed with no NL→CRNL translation comes out as a staircase.
+    cbreak touches the input side only — and leaves Ctrl+C a signal, which
+    the caller handles rather than reading as a byte.
+
+    Yields the context manager to wrap any prompt that reads a typed line:
+    :func:`read_line` needs the canonical mode this suspends.
+    """
+    if sys.platform == "win32" or not is_interactive(stdin, stdout):
+        yield contextlib.nullcontext
+        return
+    import termios
+    import tty
+
+    fd = stdin.fileno()
+    saved = termios.tcgetattr(fd)
+
+    @contextlib.contextmanager
+    def typed() -> Iterator[None]:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        try:
+            yield
+        finally:
+            tty.setcbreak(fd, termios.TCSANOW)
+
+    try:
+        # TCSANOW, not setcbreak's TCSAFLUSH default: flushing discards
+        # typeahead, and a key pressed while the menu was still drawing is
+        # one the user meant, not one to swallow.
+        tty.setcbreak(fd, termios.TCSANOW)
+        yield typed
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+
+
+def pending(stdin: IO[str]) -> bool:
+    """Whether a keypress is already waiting to be read.
+
+    An animation is time the menu is not listening, so it asks: with another
+    key already queued, the frames still to draw are ones nobody will look
+    at, and dropping them is what keeps a held-down key feeling immediate
+    instead of replaying a backlog of slides.
+    """
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            return msvcrt.kbhit()
+        import select
+
+        return bool(select.select([stdin], [], [], 0)[0])
+    except (AttributeError, ImportError, OSError, ValueError):
+        return False
 
 
 def read_key(stdin: IO[str] | None = None, stdout: IO[str] | None = None) -> str:

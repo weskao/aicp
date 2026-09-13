@@ -18,15 +18,24 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import sys
 from pathlib import Path
 
 import pytest
 
-from aicp._keyreader import is_interactive, read_key
+from aicp import menu as menu_module
+from aicp._keyreader import is_interactive, key_session, read_key
+from aicp._utils import BOLD, CYAN, GREEN
 from aicp.config import resolve
 from aicp.contracts import ROSTER
-from aicp.menu import ROWS, config_menu, swap_ai
+from aicp.menu import ROWS, MenuState, _order_motion, _panel, config_menu, swap_ai
+from aicp.present import width
+
+
+def _plain(text: str) -> str:
+    """*text* with its colour stripped — what the eye reads on the line."""
+    return re.sub(r"\033\[[0-9;]*m", "", text)
 
 if sys.platform != "win32":
     import pty
@@ -109,6 +118,52 @@ def test_the_cli_row_rotates_the_chain_and_persists_it(menu):
     _, _out, cfg = menu("4\nq\n")
     rotated = " ".join((*ROSTER_NAMES[1:], ROSTER_NAMES[0]))
     assert f"AICP_CLI_ORDER={rotated}" in cfg.read_text(encoding="utf-8").splitlines()
+
+
+def test_cli_order_motion_slides_one_name_and_keeps_every_frame_one_width():
+    """The slide starts on the old order, ends on the new one, and never
+    changes shape on the way — a frame that resized would shove the panel's
+    right-hand border around mid-animation."""
+    before = list(ROSTER_NAMES)
+    after = [*before[1:], before[0]]
+    columns = width(" → ".join(after))
+
+    frames = [frame for frame, _held in _order_motion(before, after, columns, CYAN)]
+
+    assert _plain(frames[0]) == " → ".join(before)
+    assert _plain(frames[-1]) == " → ".join(after)
+    assert {width(frame) for frame in frames} == {columns}, "the panel must not resize mid-slide"
+    assert len({_plain(frame) for frame in frames}) == len(frames), "every frame is one column on"
+    assert f"{GREEN}{BOLD}{after[0]}" in frames[-1]  # the promoted CLI is lit
+
+
+def test_cli_order_motion_runs_the_other_way_too():
+    before = list(ROSTER_NAMES)
+    after = [before[-1], *before[:-1]]
+
+    frames = [f for f, _held in _order_motion(before, after, width(" → ".join(after)), CYAN)]
+
+    assert _plain(frames[0]) == " → ".join(before)
+    assert _plain(frames[-1]) == " → ".join(after)
+
+
+@pytest.mark.parametrize("columns, lines", [(80, 24), (100, 24), (60, 24), (100, 14)])
+def test_the_panel_fits_the_terminal_it_draws_on(columns, lines, monkeypatch):
+    """Every line inside the terminal, in both languages.
+
+    This is the redraw bug, not a cosmetic one: a frame wider than the
+    terminal wraps, which silently doubles how many rows it occupies, and
+    the in-place repaint then walks the cursor up too few rows and smears a
+    fresh half-frame down the screen on every keypress.
+    """
+    monkeypatch.setattr(menu_module, "_terminal_size", lambda _out: os.terminal_size((columns, lines)))
+    for lang in ("en", "zh-TW"):
+        state = MenuState(Path("menu.aicprc"), True, True, lang, list(ROSTER_NAMES))
+
+        frame = _panel(state, selected=4)
+
+        assert max(width(line) for line in frame) <= columns, lang
+        assert len(frame) < lines, lang
 
 
 # ── a pick that does not exist changes nothing ───────────────────────────────
@@ -257,8 +312,8 @@ def raw_pty():
     [
         (b"\x1b[A", "up"),
         (b"\x1b[B", "down"),
-        (b"\x1b[C", "left"),
-        (b"\x1b[D", "right"),
+        (b"\x1b[C", "right"),
+        (b"\x1b[D", "left"),
         (b"\r", "enter"),
         (b"q", "quit"),
         (b"\x03", "quit"),  # raw mode disables ISIG, so Ctrl+C is a byte
@@ -340,3 +395,43 @@ def test_rows_are_data_addressed_by_index(menu):
 def test_the_prompt_names_the_actual_row_count(menu):
     _, out, _ = menu("q\n")
     assert f"1-{len(ROWS)}" in out
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX termios path")
+def test_the_key_session_keeps_the_terminal_from_echoing_between_keys():
+    """The bug behind "hold Enter and the panel multiplies".
+
+    Raw mode per keypress leaves the terminal echoing between reads, so a key
+    pressed while the order row is mid-slide is echoed onto the screen by the
+    driver — an Enter pushes the frame down a row and every repaint after it
+    stacks another header. The session has to hold that off for as long as it
+    is drawing, hand the line discipline back for a typed prompt, and leave
+    the terminal exactly as it found it.
+    """
+    controller, follower = pty.openpty()
+    stream = os.fdopen(follower, "r", buffering=1)
+    try:
+        def flags():
+            # ECHO and ICANON only: the rest of the struct carries transient
+            # kernel state (PENDIN) that changes on its own and would make
+            # this assert about the kernel rather than about the session.
+            mode = termios.tcgetattr(follower)
+            return bool(mode[3] & termios.ECHO), bool(mode[3] & termios.ICANON)
+
+        before = flags()
+
+        with key_session(stream, stream) as typed:
+            assert flags() == (False, False), "a drawing menu must not let the driver echo"
+            with typed():
+                assert flags() == (True, True), "a typed prompt needs its line discipline"
+            assert flags() == (False, False), "and the session takes it back afterwards"
+        assert flags() == before, "the terminal is left as it was found"
+    finally:
+        stream.close()
+        os.close(controller)
+
+
+def test_a_non_tty_key_session_is_a_no_op():
+    """CI has no terminal to put into cbreak, and must not fail trying."""
+    with key_session(io.StringIO(), io.StringIO()) as typed, typed():
+        pass
