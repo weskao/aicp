@@ -22,7 +22,7 @@ import unicodedata
 from collections.abc import Sequence
 from pathlib import Path
 
-from ._utils import BOLD, DIM, MAGENTA, RESET
+from ._utils import BOLD, DIM, RESET
 from .i18n import t
 
 __all__ = [
@@ -214,9 +214,15 @@ def render_panel(
     separator first, then one line per note) — for content that isn't a
     (label, value) pair, such as the config menu's per-row help text and its
     key-hint footer. A row whose ``value`` is empty is a section heading
-    (e.g. the config menu's "Steps"/"General"/"Tools" groups) — it spans the
-    full width in bold magenta instead of sharing the label/value columns,
-    matching ai-accounts' own config menu group styling.
+    (e.g. the config menu's "Steps"/"General"/"Tools" groups) — bold, then a
+    dim rule out to the frame, spanning the full width instead of sharing the
+    label/value columns. Weight and the rule carry the separation, not a
+    fifth hue: bold against DIM labels reads as a heading at a glance, while
+    CYAN/GREEN/MAGENTA stay free to mean what a *value* means elsewhere (a
+    changeable setting, a state, the repo name), and the frame's own colour
+    stays chrome. Bold on the terminal's default foreground — the same
+    treatment as *title* — rather than a hardcoded white, so the heading
+    survives a light-background theme.
     """
     label_w = max(width(k) for k, v in rows if v)
     value_w = max((width(v) for _, v in rows if v), default=0)
@@ -230,9 +236,9 @@ def render_panel(
     out = [f"{accent}╭─ {BOLD}{title}{RESET}{accent} {'─' * dashes}╮{RESET}"]
     for i, (label, value) in enumerate(rows):
         if not value:
-            pad = " " * (inner - 2 - width(label))
-            body = f"  {MAGENTA}{BOLD}{label}{RESET}{pad}"
-            out.append(f"{accent}│{RESET}{body}{accent}│{RESET}")
+            rule = max(inner - 4 - width(label), 0)
+            tail = f" {DIM}{'─' * rule}{RESET} " if rule else " " * (inner - 2 - width(label))
+            out.append(f"{accent}│{RESET}  {BOLD}{label}{RESET}{tail}{accent}│{RESET}")
             continue
         pad = " " * (label_w - width(label))
         vpad = " " * (value_w - width(value))
