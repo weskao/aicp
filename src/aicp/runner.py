@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from aicp import budget as budget_mod
-from aicp import timing
+from aicp import quota, timing
 from aicp._utils import (
     BOLD,
     CYAN,
@@ -450,6 +450,19 @@ def run_step(
             if argv is None or not have(cli):
                 continue
 
+            # An earlier run already found this one out of quota. Skipping is
+            # the whole point: the alternative is burning a full budget on a
+            # CLI that cannot succeed until its window expires.
+            remaining = quota.cooling(cli)
+            if remaining:
+                note = t(
+                    "step_quota_cooling",
+                    "quota cooldown — %sm left, skipping",
+                    -(-remaining // 60),  # round up, so it never reads "0m left"
+                )
+                print(f"  {YELLOW}⚠{RESET} {CYAN}{cli}{RESET}{DIM}  {note}{RESET}", file=out)
+                continue
+
             allowed = budget_mod.compute(cli, cwd=cwd)
             hint = t("budget_hint", "budget %ss · %s", allowed.seconds, allowed.note)
             print(f"{BOLD}▸ {prompt}{RESET}  {DIM}{hint}{RESET}", file=out)
@@ -523,6 +536,7 @@ def run_step(
                 )
             elif outcome == "quota":
                 quota_clis.append(cli)
+                quota.record(cli)
                 note = t("step_quota_note", "quota/rate-limit exhausted — skipping for this run")
                 print(f"  {YELLOW}⚠{RESET} {CYAN}{cli}{RESET}{DIM}  {elapsed}s · {note}{RESET}", file=out)
                 _notify_quietly(

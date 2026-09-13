@@ -129,6 +129,7 @@ CATALOG: dict[str, str] = {
     # ── Telegram ────────────────────────────────────────────────────────────
     "tg_timeout": "⏱️ aicp：%s 執行「%s」時 %s 逾時（超過 %ss 預算，%s），已切換下一個 CLI。",
     "step_quota_note": "配額／速率限制已耗盡 — 本次執行略過",
+    "step_quota_cooling": "配額冷卻中 — 尚餘 %s 分鐘，略過",
     "tg_quota": "⚠️ aicp：%s 執行「%s」時 %s 的配額／速率限制已耗盡 — 本次執行後續略過。",
     "usage_limit_reached": "usage_limit_reached",
     "tg_unverifiable": "⚠️ aicp：分支 %s（%s）無法驗證 push —— %s/%s 無法解析（遠端不可達，或這個分支從未推送過）。新增 commit %s 個。",

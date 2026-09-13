@@ -75,8 +75,18 @@ The opening run panel prints the resolved chain, and the commit panel and
 final RESULT table name the CLI that handled each step (`—` when skipped).
 When a CLI emits a supported, exact quota/rate-limit signal, aicp records the
 outcome as `quota`, notifies through the usual notification path, and excludes
-that CLI from the rest of that one commit/push flow. The exclusion is not
-persisted: the next `aicp` run starts with the full chain again.
+that CLI from the rest of that one commit/push flow. The exclusion also
+persists: the CLI stays skipped for `AICP_QUOTA_COOLDOWN` seconds (default one
+hour, state in `~/.aicp/quota.json`), because a token or rate-limit wall
+normally stands for hours and every run inside that window would otherwise burn
+a full budget per step on a CLI that cannot succeed. A skipped CLI prints how
+long is left; `AICP_QUOTA_COOLDOWN=0` switches the cooldown off entirely, and
+deleting the file clears it.
+
+Only the `quota` outcome starts a cooldown. A timeout does not — a CLI that
+hangs on its rate limit instead of exiting is indistinguishable from one merely
+running long, and sidelining it for an hour on that guess costs more than the
+retry does.
 
 Exact detection is intentionally narrow. It is supported for Codex, Claude,
 Vibe, and Grok only; Copilot and `agy` have no verified quota signature, so a
@@ -208,6 +218,7 @@ See [`config.example.json`](config.example.json) for a ready-to-copy template.
 | `AICP_TIMEOUT_MAX` | `1800` | Ceiling on the formula above. A CLI's own run history may still widen its budget past this — that's direct evidence it legitimately needs the time, not a guess. |
 | `AICP_TIMEOUT_HISTORY_LINES` | `500` | How many recent timing-log rows are scanned when widening a budget from history. |
 | `AICP_TIMEOUT_HISTORY_MULT` | `1.3` | Multiplier applied to a CLI's largest successful run when that exceeds the formula. |
+| `AICP_QUOTA_COOLDOWN` | `3600` | Seconds a CLI that reported a quota/rate-limit signal stays skipped, across runs (state in `~/.aicp/quota.json`). `0` switches the feature off; anything not a plain integer in 1..604800 falls back to the default. |
 | `AICP_SKIP_SECRET_SCAN` | *(unset)* | `1` bypasses the pre-commit secret scan for one run — the documented escape for a false positive. |
 | `AICP_CONFIG` | `~/.aicp/config.json` | Which file this loader reads. Environment-variable only — a file can't rename itself. |
 | `AICP_TG_SEND` | `~/.claude/scripts/tg-send.sh` | The Telegram send script run at the end of a notification. **Environment-variable only** — refused if set in `config.json`. |

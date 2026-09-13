@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from aicp import _utils, runner, timing
+from aicp import _utils, quota, runner, timing
 
 POSIX_ONLY = pytest.mark.skipif(
     sys.platform == "win32",
@@ -430,6 +430,104 @@ def test_verbose_output_remains_live_and_can_still_classify_quota(
     assert result.winner == "claude"
     assert "usage_limit_reached" in capfd.readouterr().out
     assert [row[4] for row in outcomes(timing_log)] == ["quota", "ok"]
+
+
+# ── cross-run quota cooldown ─────────────────────────────────────────────────
+#
+# quota_clis only excludes an exhausted CLI for the REST of this run. These pin
+# the other half: the exclusion survives into the next run, so a CLI that is out
+# of tokens does not cost a full budget on every subsequent step.
+
+
+@pytest.fixture
+def quota_file(tmp_path, monkeypatch) -> Path:
+    path = tmp_path / "runner-quota.json"
+    monkeypatch.setenv("AICP_QUOTA_COOLDOWN", "3600")
+    monkeypatch.setattr(quota, "quota_path", lambda: path)
+    return path
+
+
+@POSIX_ONLY
+def test_a_quota_outcome_is_persisted_for_the_next_run(sh_stub, timing_log, quota_file):
+    sh_stub("codex", "echo usage_limit_reached\nexit 1\n")
+    sh_stub("claude", "exit 0\n")
+
+    runner.run_step("/commit", ("codex", "claude"), stream=io.StringIO())
+
+    assert quota.cooling("codex", path=quota_file) > 0
+
+
+@POSIX_ONLY
+def test_a_cooling_cli_is_skipped_and_the_chain_falls_through(
+    sh_stub, timing_log, call_log, quota_file
+):
+    sh_stub("codex", f"echo codex >> {call_log}\nexit 0\n")
+    sh_stub("claude", f"echo claude >> {call_log}\nexit 0\n")
+    quota.record("codex", path=quota_file)
+    stream = io.StringIO()
+
+    result = runner.run_step("/commit", ("codex", "claude"), stream=stream)
+
+    assert result.winner == "claude"
+    assert called(call_log) == ["claude"], "the cooling CLI must not be invoked at all"
+    assert "codex" in stream.getvalue(), "the skip has to say which CLI it skipped"
+    assert not timing_log.exists() or all(
+        row[1] != "codex" for row in outcomes(timing_log)
+    ), "a CLI that never ran must not be logged as having an outcome"
+
+
+@POSIX_ONLY
+def test_a_cooling_cli_is_tried_again_once_its_window_expires(
+    sh_stub, timing_log, call_log, quota_file
+):
+    sh_stub("codex", f"echo codex >> {call_log}\nexit 0\n")
+    sh_stub("claude", f"echo claude >> {call_log}\nexit 0\n")
+    quota.record("codex", path=quota_file, now=time.time() - 7200)
+
+    result = runner.run_step("/commit", ("codex", "claude"), stream=io.StringIO())
+
+    assert result.winner == "codex"
+    assert called(call_log) == ["codex"]
+
+
+@POSIX_ONLY
+def test_a_zero_cooldown_keeps_every_cli_in_the_chain(
+    sh_stub, timing_log, call_log, quota_file, monkeypatch
+):
+    monkeypatch.setenv("AICP_QUOTA_COOLDOWN", "0")
+    sh_stub("codex", f"echo codex >> {call_log}\nexit 0\n")
+    sh_stub("claude", f"echo claude >> {call_log}\nexit 0\n")
+    quota_file.write_text('{"codex": 99999999999}', encoding="utf-8")
+
+    result = runner.run_step("/commit", ("codex", "claude"), stream=io.StringIO())
+
+    assert result.winner == "codex"
+    assert called(call_log) == ["codex"]
+
+
+@POSIX_ONLY
+def test_an_ordinary_failure_is_not_persisted_as_a_cooldown(
+    sh_stub, timing_log, quota_file
+):
+    sh_stub("codex", "echo ordinary error\nexit 1\n")
+    sh_stub("claude", "exit 0\n")
+
+    runner.run_step("/commit", ("codex", "claude"), stream=io.StringIO())
+
+    assert quota.cooling("codex", path=quota_file) == 0
+
+
+@POSIX_ONLY
+def test_a_timeout_is_not_persisted_as_a_cooldown(sh_stub, timing_log, quota_file, monkeypatch):
+    # A CLI hanging on its rate limit looks like a timeout, not a quota signal;
+    # promoting one to a cooldown would sideline a CLI that merely ran long.
+    monkeypatch.setenv("AICP_STEP_TIMEOUT", "1")
+    sh_stub("codex", "sleep 30\n")
+    sh_stub("claude", "exit 0\n")
+
+    runner.run_step("/commit", ("codex", "claude"), stream=io.StringIO())
+
+    assert quota.cooling("codex", path=quota_file) == 0
 
 
 @POSIX_ONLY
