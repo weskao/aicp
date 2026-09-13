@@ -28,3 +28,12 @@ state.json).
 Follow up with a dedicated, more thorough security scan of `skills.py` and
 its tests, using the Fable 5.1 model. Do not consider this module fully
 reviewed until that pass runs.
+
+## Improve `aicp` command overall performance (MEDIUM, open)
+
+Do a deep performance pass on the whole `aicp` command, not just one path.
+Example symptom: an AI agent failed to complete the git commit stage
+reliably, so it was avoided in the safe git push stage afterward — find
+and fix cases like this where a slow/unreliable step gets silently
+bypassed instead of fixed. Audit other stages for similar slowness or
+failure-avoidance patterns.
