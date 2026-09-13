@@ -298,9 +298,22 @@ def _owned(skill: Skill) -> tuple[str, ...]:
     )
 
 
-def _resolve(target: Path, rel: str) -> Path:
-    """A record key back to a real path — ``"."`` means the target itself."""
-    return target if rel == "." else target / rel
+def _resolve(target: Path, rel: str) -> Path | None:
+    """A record key back to a real path — ``"."`` means the target itself.
+
+    ``rel`` comes from JSON on disk (:mod:`aicp`'s own state file, or a legacy
+    sidecar), not from the trusted vendored source, so it must be treated as
+    untrusted input: an absolute path silently discards *target* in a plain
+    ``target / rel`` join (pathlib joins on an absolute right-hand side
+    replace the left entirely), and a ``..`` component can walk out of it —
+    either would let a hostile or corrupted record make :func:`_matches` hash
+    an arbitrary file elsewhere on disk. None means "reject this key".
+    """
+    if rel == ".":
+        return target
+    if Path(rel).is_absolute() or ".." in Path(rel).parts:
+        return None
+    return target / rel
 
 
 def _matches(target: Path, files: dict[str, str]) -> bool:
@@ -311,8 +324,11 @@ def _matches(target: Path, files: dict[str, str]) -> bool:
     modification of our install.
     """
     for rel, digest in files.items():
+        resolved = _resolve(target, rel)
+        if resolved is None:
+            return False
         try:
-            if _sha(_resolve(target, rel).read_bytes()) != digest:
+            if _sha(resolved.read_bytes()) != digest:
                 return False
         except OSError:
             return False
@@ -320,11 +336,18 @@ def _matches(target: Path, files: dict[str, str]) -> bool:
 
 
 def _disk_hashes(skill: Skill, target: Path) -> dict[str, str]:
-    """Hash the files *skill* owns as they currently sit at *target*."""
+    """Hash the files *skill* owns as they currently sit at *target*.
+
+    ``rel`` here comes from :func:`_owned`, always a safe path under the
+    vendored source, so ``_resolve`` never rejects it — the ``None`` case
+    exists only for untrusted keys loaded back from a record.
+    """
     hashes: dict[str, str] = {}
     for rel in _owned(skill):
+        resolved = _resolve(target, rel)
+        assert resolved is not None, f"_owned() produced an unsafe key: {rel!r}"
         try:
-            hashes[rel] = _sha(_resolve(target, rel).read_bytes())
+            hashes[rel] = _sha(resolved.read_bytes())
         except OSError:
             continue
     return hashes

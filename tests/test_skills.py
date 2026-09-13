@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import builtins
 import json
+import os
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -369,6 +371,87 @@ def test_state_is_not_written_into_a_cli_config_dir(configured):
 
     assert not (h / ".grok" / STATE_DIR_NAME).exists()
     assert (h / STATE_DIR_NAME / STATE_FILE_NAME).is_file()
+
+
+# ── state.json is untrusted input: a hostile or corrupted record ────────────
+
+
+def test_an_absolute_path_record_key_cannot_escape_the_target(configured, tmp_path):
+    """pathlib's own footgun: ``Path(target) / "/etc/passwd"`` discards
+    *target* entirely and returns ``/etc/passwd`` — a record whose "files" key
+    is an absolute path must not turn into an arbitrary-file read.
+    """
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    secret = tmp_path / "outside-secret"
+    secret.write_text("do not read me\n", encoding="utf-8")
+    target = h / ".codex/skills/commit/SKILL.md"
+
+    records = skills._load_state(h)
+    records[str(target)]["files"] = {str(secret): skills._sha(secret.read_bytes())}
+    skills._save_state(records, h)
+
+    # A "match" here would mean the traversal succeeded and the attacker's
+    # planted hash was compared against the outside file's real content.
+    assert skills.detect(cli("codex"), "commit", home=h) == skills.FOREIGN
+
+
+def test_a_dotdot_record_key_cannot_escape_the_target(configured, tmp_path):
+    """A directory-skill target, not a single-file one: escaping through a
+    FILE component (``commit/SKILL.md/../..``) fails on its own — the OS
+    refuses to treat a regular file as a directory (ENOTDIR) regardless of
+    what this code does. A real directory has no such accidental floor, so
+    this is the case that actually exercises the guard.
+    """
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    secret = tmp_path / "outside-secret"
+    secret.write_text("do not read me\n", encoding="utf-8")
+    target = h / ".codex/skills/safe-git-push"
+    # A lexically correct "../.." key, computed the same way ``target / rel``
+    # then reading it would resolve it — not a hand-counted guess that could
+    # miss the real secret and pass for the wrong reason (a nonexistent path,
+    # not a blocked one).
+    rel = os.path.relpath(secret, start=target)
+
+    records = skills._load_state(h)
+    records[str(target)]["files"] = {rel: skills._sha(secret.read_bytes())}
+    skills._save_state(records, h)
+
+    assert skills.detect(cli("codex"), "safe-git-push", home=h) == skills.FOREIGN
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFOs are POSIX-only")
+def test_a_traversal_key_does_not_hang_on_a_fifo(configured):
+    """A record key resolving to a FIFO must not block detect() forever.
+
+    Run in a daemon thread with a bounded join: if the bug is present this
+    would otherwise hang the whole test process rather than fail it.
+    """
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    fifo = h / "blocking-fifo"
+    os.mkfifo(fifo)
+    target = h / ".codex/skills/commit/SKILL.md"
+
+    records = skills._load_state(h)
+    records[str(target)]["files"] = {str(fifo): "0" * 64}
+    skills._save_state(records, h)
+
+    result: dict[str, str] = {}
+    worker = threading.Thread(
+        target=lambda: result.__setitem__(
+            "state", skills.detect(cli("codex"), "commit", home=h)
+        ),
+        daemon=True,
+    )
+    worker.start()
+    worker.join(timeout=2)
+    if worker.is_alive():
+        with open(fifo, "wb"):  # unstick the hung open() so the thread can exit
+            pass
+        pytest.fail("detect() hung reading a FIFO reached via a traversal record key")
+    assert result["state"] == skills.FOREIGN
 
 
 # ── migrating off the legacy in-place sidecar ────────────────────────────────
