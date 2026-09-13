@@ -263,7 +263,7 @@ def _install_skills(*, yes: bool, force: bool) -> int:
 # ── the main flow (port of aicp()) ───────────────────────────────────────────
 
 
-def _run_panel(repo: str, top: str, branch: str, remote: str) -> None:
+def _run_panel(repo: str, top: str, branch: str, remote: str, chain: Sequence[str]) -> None:
     _echo(
         present.render(
             [
@@ -281,13 +281,14 @@ def _run_panel(repo: str, top: str, branch: str, remote: str) -> None:
             accent=BLUE,
         )
     )
+    _dim(t("active_chain", "▸ chain: %s", " → ".join(chain)))
     print()
 
 
 def _commit_step(
     settings: config.Settings, chain: Sequence[str], before: str, *, verbose: bool
-) -> int | None:
-    """``None`` to carry on; an exit code to stop the run."""
+) -> runner.StepResult | None:
+    """Run /commit when needed and return its handler metadata."""
     if not settings.do_commit:
         _dim(
             t(
@@ -303,11 +304,9 @@ def _commit_step(
         return None
 
     _nudge(chain)
-    rc = runner.run_step("/commit", chain, notify=notify.notify, verbose=verbose)
-    if rc == runner.ABORT_RC:
-        return rc
-    if rc != 0:
-        return 1
+    result = runner.run_step("/commit", chain, notify=notify.notify, verbose=verbose)
+    if result.rc != 0:
+        return result
 
     # Shown here, attached to the step that produced it, rather than after the
     # push: the panel answers "what did /commit write?", which is stale by the
@@ -318,14 +317,14 @@ def _commit_step(
         print()
         _echo(
             present.render(
-                rows,
+                [(t("commit_handler", "Commit handler"), result.winner or "—"), *rows],
                 f'{t("commits_panel_title", "NEW COMMITS")} · {gitflow.tz_label()}',
                 mode="panel",
                 accent=GREEN,
                 zebra=True,
             )
         )
-    return None
+    return result
 
 
 def _push_step(
@@ -335,8 +334,8 @@ def _push_step(
     branch: str,
     *,
     verbose: bool,
-) -> int | None:
-    """``None`` to carry on; an exit code to stop the run."""
+) -> int | runner.StepResult | None:
+    """Run /safe-git-push when needed; ``int`` means preflight failed."""
     if not settings.do_push:
         _dim(
             t(
@@ -369,15 +368,31 @@ def _push_step(
         _echo(lines)
         return 1
     _nudge(chain)
-    rc = runner.run_step("/safe-git-push", chain, notify=notify.notify, verbose=verbose)
-    return rc if rc == runner.ABORT_RC else None
+    return runner.run_step("/safe-git-push", chain, notify=notify.notify, verbose=verbose)
 
 
-def _report(summary: gitflow.ResultSummary, repo: str, remote: str, branch: str) -> int:
+def _report(
+    summary: gitflow.ResultSummary,
+    repo: str,
+    remote: str,
+    branch: str,
+    *,
+    commit_handler: str | None,
+    push_handler: str | None,
+) -> int:
     """Print the git-verified RESULT table and decide the exit code."""
     if summary.fetch_note:
         print(summary.fetch_note)
-    _echo(present.render(summary.rows(), t("result_title", "RESULT")))
+    _echo(
+        present.render(
+            [
+                *summary.rows(),
+                (t("commit_handler", "Commit handler"), commit_handler or "—"),
+                (t("push_handler", "Push handler"), push_handler or "—"),
+            ],
+            t("result_title", "RESULT"),
+        )
+    )
 
     if summary.in_sync:
         return 0
@@ -455,6 +470,10 @@ def _report(summary: gitflow.ResultSummary, repo: str, remote: str, branch: str)
 
 def _flow(settings: config.Settings, *, verbose: bool) -> int:
     chain = settings.cli_chain
+    excluded: set[str] = set()
+
+    def active_chain() -> tuple[str, ...]:
+        return tuple(cli for cli in chain if cli not in excluded)
 
     branch = gitflow.current_branch()
     if branch is None:
@@ -465,7 +484,7 @@ def _flow(settings: config.Settings, *, verbose: bool) -> int:
     repo = Path(top).name if top else ""
     before = _git_out("rev-parse", "HEAD")
 
-    _run_panel(repo, top, branch, remote)
+    _run_panel(repo, top, branch, remote, chain)
 
     # precheck owns the order that matters (git status, then "is any CLI
     # installed", then the expensive secret scan) and refuses the run outright
@@ -479,21 +498,34 @@ def _flow(settings: config.Settings, *, verbose: bool) -> int:
     if not proceed:
         return 1
 
-    stop = _commit_step(settings, chain, before, verbose=verbose)
-    if stop is not None:
-        return stop
+    commit_result = _commit_step(settings, active_chain(), before, verbose=verbose)
+    if commit_result is not None:
+        excluded.update(commit_result.quota_clis)
+        if commit_result.rc != 0:
+            return commit_result.rc
     print()
 
-    stop = _push_step(settings, chain, remote, branch, verbose=verbose)
-    if stop is not None:
-        return stop
+    push_result = _push_step(settings, active_chain(), remote, branch, verbose=verbose)
+    if isinstance(push_result, int):
+        return push_result
+    if push_result is not None:
+        excluded.update(push_result.quota_clis)
+        if push_result.rc == runner.ABORT_RC:
+            return push_result.rc
     print()
 
     # Trust git, not the CLI: read the real state back before reporting.
     after = _git_out("rev-parse", "HEAD")
     with _spin(t("spin_fetch", "git fetch %s/%s…", remote, branch), verbose):
         summary = gitflow.result_summary(before, after, remote, branch)
-    return _report(summary, repo, remote, branch)
+    return _report(
+        summary,
+        repo,
+        remote,
+        branch,
+        commit_handler=commit_result.winner if commit_result is not None else None,
+        push_handler=push_result.winner if isinstance(push_result, runner.StepResult) else None,
+    )
 
 
 # ── entry point ──────────────────────────────────────────────────────────────

@@ -192,7 +192,7 @@ def test_swap_ai_on_the_current_first_writes_nothing(swap):
 def test_swap_ai_persists_the_pick_as_the_new_first(swap):
     code, _, cfg = swap("5\n")
     assert code == 0
-    expected = "AICP_CLI_ORDER=vibe agy codex claude copilot"
+    expected = "AICP_CLI_ORDER=vibe agy codex claude copilot grok"
     assert expected in cfg.read_text(encoding="utf-8").splitlines()
 
 

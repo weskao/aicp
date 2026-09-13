@@ -6,7 +6,7 @@ Schema (TAB-separated, one row per CLI invocation)::
 
     <utc-iso8601-Z>  <cli>  <step>  <elapsed-seconds>  <outcome>  <rc>
 
-``outcome`` is one of ``ok`` / ``timeout`` / ``fail`` / ``abort``. The
+``outcome`` is one of ``ok`` / ``timeout`` / ``quota`` / ``fail`` / ``abort``. The
 distinction is load-bearing, not decorative: a timed-out run's "elapsed" is
 just whatever the budget happened to be, so feeding it back into the budget
 formula would widen the budget, which produces an even bigger recorded

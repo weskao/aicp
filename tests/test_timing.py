@@ -121,10 +121,11 @@ def test_max_ok_seconds_takes_the_largest_ok_row(log):
     assert timing.max_ok_seconds("copilot", path=log) == 500
 
 
-def test_max_ok_seconds_ignores_timeout_abort_and_fail_rows(log):
+def test_max_ok_seconds_ignores_timeout_quota_abort_and_fail_rows(log):
     write_rows(
         log,
         row("copilot", "9999", "timeout", "124"),
+        row("copilot", "9999", "quota", "1"),
         row("copilot", "9999", "abort", "130"),
         row("copilot", "9999", "fail", "1"),
     )

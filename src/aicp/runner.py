@@ -2,8 +2,8 @@
 
 Port of ``_ai_run``/``_aicp_invoke``/``_aicp_timeout`` in ``~/scripts/bin/aicp``.
 
-Returns 0 on the first CLI that exits 0, :data:`ABORT_RC` if a CLI was killed
-by a signal, 1 when every CLI failed on its own.
+Returns a :class:`StepResult` naming the first CLI that exits 0 plus every CLI
+that reported a supported quota signal during the step.
 
 **Signal handling is the load-bearing part.** The zsh original wraps every
 invocation in GNU ``timeout --foreground``, and ``--foreground`` is not
@@ -39,9 +39,12 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, TextIO
 
 from aicp import budget as budget_mod
 from aicp import timing
@@ -65,6 +68,7 @@ __all__ = [
     "ABORT_RC",
     "KILL_AFTER",
     "TIMEOUT_RC",
+    "StepResult",
     "classify",
     "invoke_argv",
     "normalize_rc",
@@ -74,6 +78,20 @@ __all__ = [
 TIMEOUT_RC = 124  # GNU timeout's own "the command timed out" status
 ABORT_RC = 130    # 128 + SIGINT
 KILL_AFTER = 10   # grace period between SIGTERM and SIGKILL (timeout --kill-after=10)
+
+
+@dataclass(frozen=True)
+class StepResult:
+    """One fallback step's caller-facing result.
+
+    ``quota_clis`` records exhausted handlers even when a later CLI wins. The
+    caller owns how long those exclusions live; :func:`aicp.cli._flow` keeps
+    them only for its commit/push pair.
+    """
+
+    rc: int
+    winner: str | None = None
+    quota_clis: tuple[str, ...] = ()
 
 # Above this, a budget is treated as "no timeout" rather than a deadline. A
 # budget is only ever a digit string out of the environment or .aicprc, so it
@@ -95,6 +113,7 @@ _FLAGS: dict[str, tuple[str, ...]] = {
     "agy": ("--dangerously-skip-permissions", "--new-project"),
     "claude": ("--dangerously-skip-permissions", "--strict-mcp-config"),
     "copilot": ("--allow-all", "--disable-builtin-mcps", "--no-auto-update"),
+    "grok": ("--always-approve", "--no-subagents"),
     # --trust is not the approval flag (--auto-approve is) and is not optional:
     # vibe asks once, interactively, before it will touch an untrusted
     # directory, and its own --help names --trust as the answer for
@@ -103,6 +122,23 @@ _FLAGS: dict[str, tuple[str, ...]] = {
     # kills it — a hang presented as a timeout. Per-invocation, never written to
     # vibe's trusted_folders.toml, so aicp leaves no persistent trust behind.
     "vibe": ("--auto-approve", "--trust"),
+}
+
+# Literal signals confirmed by T1. Copilot and agy are intentionally absent:
+# neither had a supported quota signature, and broad guesses would turn an
+# ordinary failure into a run-scoped exclusion.
+_QUOTA_SIGNALS: dict[str, tuple[str, ...]] = {
+    "codex": ("usage_limit_reached", "The usage limit has been reached"),
+    "claude": ('"type":"rate_limit_error"', "Usage limit reached"),
+    "vibe": (
+        "Rate limit exceeded. Please wait a moment before trying again.",
+        "Rate limits exceeded. Please wait a moment before trying again.",
+    ),
+    "grok": (
+        "You've hit the rate limit for your plan.",
+        "You've reached your free Grok Build usage limit for now.",
+        "API rate limit. Ask a team admin to purchase more credits for higher limits",
+    ),
 }
 
 
@@ -131,7 +167,7 @@ def invoke_argv(cli: str, prompt: str) -> list[str] | None:
 # "copilot.exe" and nothing else, and it cannot execute a batch file even when
 # handed one, because a .cmd is a script that only cmd.exe can interpret.
 #
-# Every one of aicp's five CLIs is npm-installed, and npm's Windows shim is a
+# Every one of aicp's six CLIs is npm-installed, and npm's Windows shim is a
 # .cmd — so `Popen(["copilot", ...])` raised `FileNotFoundError: [WinError 2]`
 # on every Windows machine. `have()` could not catch it: shutil.which DOES
 # honor %PATHEXT%, so the gate said the CLI was present and the very next line
@@ -220,8 +256,8 @@ def normalize_rc(returncode: int) -> int:
     return 128 - returncode if returncode < 0 else returncode
 
 
-def classify(rc: int, *, timed_out: bool) -> str:
-    """The timing-log outcome bucket: ok / timeout / fail / abort.
+def classify(cli: str, rc: int, *, timed_out: bool, output: str) -> str:
+    """The timing-log bucket, in abort / ok / timeout / quota / fail order.
 
     ``timed_out`` is the fact of having killed the child, not a guess from its
     status — so a CLI that exits 124 on its own is a plain ``fail``, where the
@@ -234,11 +270,37 @@ def classify(rc: int, *, timed_out: bool) -> str:
         return "ok"
     if timed_out:
         return "timeout"
+    if any(signal in output for signal in _QUOTA_SIGNALS.get(cli, ())):
+        return "quota"
     return "fail"
 
 
+def _stream_capture(path: str, done: threading.Event) -> None:
+    """Follow a private capture file without changing the child's stdout fd."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as reader:
+            while True:
+                chunk = reader.read()
+                if chunk:
+                    sys.stdout.write(chunk)
+                    sys.stdout.flush()
+                    continue
+                if done.wait(0.02):
+                    chunk = reader.read()
+                    if chunk:
+                        sys.stdout.write(chunk)
+                        sys.stdout.flush()
+                    return
+    except (OSError, ValueError):
+        return
+
+
 def _invoke(
-    argv: list[str], seconds: int, *, cwd: Path | None, capture: object | None
+    argv: list[str],
+    seconds: int,
+    *,
+    cwd: Path | None,
+    capture: TextIO | None,
 ) -> tuple[int, bool]:
     """Run *argv* under a *seconds* budget; returns ``(rc, timed_out)``.
 
@@ -262,7 +324,7 @@ def _invoke(
     Ctrl+C — still reaches the CLI itself.
     """
     command = _launch_command(argv)
-    kwargs: dict[str, object] = {"cwd": cwd}
+    kwargs: dict[str, Any] = {"cwd": cwd}
     if IS_WINDOWS:
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     if capture is not None:
@@ -311,9 +373,8 @@ def _invoke(
 
 
 @contextlib.contextmanager
-def _capture_file(enabled: bool) -> Iterator[object | None]:
-    """One reusable handle for the child's combined output, or None to inherit
-    the screen (verbose streams instead of capturing, so it opens nothing).
+def _capture_file() -> Generator[tuple[TextIO, str], None, None]:
+    """One reusable handle and path for the child's combined output.
 
     ``mkstemp`` rather than a name built from the pid. ``aicp.<pid>.log`` is
     guessable, and ``open(path, "w")`` follows whatever is already sitting at
@@ -327,16 +388,13 @@ def _capture_file(enabled: bool) -> Iterator[object | None]:
     The handle is opened once per run and rewound between CLIs rather than
     reopened by path, so the name is never resolved a second time.
     """
-    if not enabled:
-        yield None
-        return
     fd, name = tempfile.mkstemp(prefix="aicp.", suffix=".log")
     try:
         # "w+" so _replay can read back what the child wrote through the
         # inherited fd; errors="replace" because a CLI's output is arbitrary
         # bytes and a decode error here must never break the run.
         with os.fdopen(fd, "w+", encoding="utf-8", errors="replace") as handle:
-            yield handle
+            yield handle, name
     finally:
         with contextlib.suppress(OSError):
             os.unlink(name)
@@ -350,7 +408,7 @@ def _notify_quietly(notify: NotifyFn, message: str) -> None:
         return
 
 
-def _replay(capture, out) -> None:
+def _replay(capture: TextIO, out: TextIO) -> None:
     """Echo the last 5 lines of a failed CLI's captured output."""
     try:
         capture.seek(0)
@@ -361,6 +419,14 @@ def _replay(capture, out) -> None:
         print(f"    {DIM}{line}{RESET}", file=out)
 
 
+def _captured_text(capture: TextIO) -> str:
+    try:
+        capture.seek(0)
+        return capture.read()
+    except (AttributeError, OSError, ValueError):
+        return ""
+
+
 def run_step(
     prompt: str,
     chain: Sequence[str],
@@ -368,8 +434,8 @@ def run_step(
     cwd: Path | None = None,
     notify: NotifyFn = _noop,
     verbose: bool = False,
-    stream=None,
-) -> int:
+    stream: TextIO | None = None,
+) -> StepResult:
     """Run *prompt* through *chain*, one styled line per CLI.
 
     The budget is computed fresh per CLI, inside the loop: each CLI widens its
@@ -377,7 +443,8 @@ def run_step(
     right before whichever CLI is about to run.
     """
     out = stream if stream is not None else sys.stdout
-    with _capture_file(not verbose) as capture:
+    quota_clis: list[str] = []
+    with _capture_file() as (capture, capture_path):
         for cli in chain:
             argv = invoke_argv(cli, prompt)
             if argv is None or not have(cli):
@@ -389,12 +456,21 @@ def run_step(
 
             started = time.monotonic()
             spinner = Spinner(f"{cli} · {prompt}")
+            stream_done = threading.Event()
+            stream_thread = (
+                threading.Thread(
+                    target=_stream_capture, args=(capture_path, stream_done), daemon=True
+                )
+                if verbose
+                else None
+            )
             try:
                 if not verbose:
                     spinner.start()
-                if capture is not None:
-                    capture.seek(0)  # this CLI's output only, not the last one's
-                    capture.truncate()
+                capture.seek(0)  # this CLI's output only, not the last one's
+                capture.truncate()
+                if stream_thread is not None:
+                    stream_thread.start()
                 rc, timed_out = _invoke(argv, allowed.seconds, cwd=cwd, capture=capture)
             except KeyboardInterrupt:
                 timing.append(cli, prompt, int(time.monotonic() - started), "abort", ABORT_RC)
@@ -403,22 +479,26 @@ def run_step(
                     + t("interrupted", "interrupted (Ctrl+C) — aborting, no further steps run"),
                     file=out,
                 )
-                return ABORT_RC
+                return StepResult(ABORT_RC, quota_clis=tuple(quota_clis))
             finally:
+                stream_done.set()
+                if stream_thread is not None:
+                    stream_thread.join()
                 spinner.stop()
 
             elapsed = int(time.monotonic() - started)
-            outcome = classify(rc, timed_out=timed_out)
+            output = _captured_text(capture)
+            outcome = classify(cli, rc, timed_out=timed_out, output=output)
             timing.append(cli, prompt, elapsed, outcome, rc)
 
             if outcome == "abort":
                 note = t("step_signal_note", "signal %s", rc - 128)
                 print(f"  {YELLOW}⚠{RESET} {CYAN}{cli}{RESET}{DIM}  {elapsed}s · {note}{RESET}", file=out)
-                return ABORT_RC
+                return StepResult(ABORT_RC, quota_clis=tuple(quota_clis))
 
             if outcome == "ok":
                 print(f"  {GREEN}✓{RESET} {CYAN}{cli}{RESET}{DIM}  {elapsed}s{RESET}", file=out)
-                return 0
+                return StepResult(0, winner=cli, quota_clis=tuple(quota_clis))
 
             if outcome == "timeout":
                 note = t("step_timeout_note", "timed out (> %ss)", allowed.seconds)
@@ -441,12 +521,26 @@ def run_step(
                         allowed.note,
                     )
                 )
+            elif outcome == "quota":
+                quota_clis.append(cli)
+                note = t("step_quota_note", "quota/rate-limit exhausted — skipping for this run")
+                print(f"  {YELLOW}⚠{RESET} {CYAN}{cli}{RESET}{DIM}  {elapsed}s · {note}{RESET}", file=out)
+                _notify_quietly(
+                    notify,
+                    t(
+                        "tg_quota",
+                        '⚠️ aicp: %s exhausted quota/rate limit running "%s" on %s'
+                        " — skipping it for the rest of this run.",
+                        Path(cwd or os.getcwd()).name,
+                        prompt,
+                        cli,
+                    ),
+                )
             else:
                 note = t("step_exit_note", "exit %s", rc)
                 print(f"  {RED}✗{RESET} {CYAN}{cli}{RESET}{DIM}  {elapsed}s · {note}{RESET}", file=out)
 
-            if capture is not None:
-                _replay(capture, out)
+            _replay(capture, out)
 
         print(f"{RED}" + t("no_cli_for_step", "  ✗ no AI CLI could run this step") + RESET, file=out)
-        return 1
+        return StepResult(1, quota_clis=tuple(quota_clis))

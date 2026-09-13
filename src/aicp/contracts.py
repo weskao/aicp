@@ -48,17 +48,18 @@ class CLI:
     config_dir: Path
 
 
-# Default fallback order, verified against AICP_CLI_ROSTER in the current
-# ~/scripts/bin/aicp (copilot agy codex claude vibe) — copilot first (fastest,
-# most consistent cold start when benchmarked), vibe last (added most
-# recently). T3 is the consumer that reorders/persists a chain derived from
-# this; T2 and T4 must never hardcode this tuple themselves — import it.
+# Default fallback order, based on AICP_CLI_ROSTER in the current
+# ~/scripts/bin/aicp (copilot agy codex claude vibe), with Grok appended for
+# saved-chain compatibility. T3 is the consumer that reorders/persists a
+# chain derived from this; T2 and T4 must never hardcode this tuple themselves
+# — import it.
 ROSTER: tuple[CLI, ...] = (
     CLI(name="copilot", config_dir=Path.home() / ".copilot"),
     CLI(name="agy", config_dir=Path.home() / ".gemini"),  # the trap — see CLI's docstring
     CLI(name="codex", config_dir=Path.home() / ".codex"),
     CLI(name="claude", config_dir=Path.home() / ".claude"),
     CLI(name="vibe", config_dir=Path.home() / ".vibe"),
+    CLI(name="grok", config_dir=Path.home() / ".grok"),
 )
 
 # The resolved fallback chain — whatever order a run will actually try its

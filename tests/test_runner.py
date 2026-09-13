@@ -100,8 +100,8 @@ def pid_is_gone(pid: int, timeout: float = 10.0) -> bool:
 def run(prompt="/commit", chain=("copilot", "agy"), **kwargs) -> tuple[int, str]:
     """run_step with its output captured; returns (exit code, printed text)."""
     stream = io.StringIO()
-    rc = runner.run_step(prompt, chain, stream=stream, **kwargs)
-    return rc, stream.getvalue()
+    result = runner.run_step(prompt, chain, stream=stream, **kwargs)
+    return result.rc, stream.getvalue()
 
 
 # ── invoke table (ported flag-for-flag from _aicp_invoke) ────────────────────
@@ -119,6 +119,7 @@ def run(prompt="/commit", chain=("copilot", "agy"), **kwargs) -> tuple[int, str]
             "copilot",
             ["copilot", "-p", "/commit", "--allow-all", "--disable-builtin-mcps", "--no-auto-update"],
         ),
+        ("grok", ["grok", "-p", "/commit", "--always-approve", "--no-subagents"]),
         ("codex", ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "/commit"]),
         ("vibe", ["vibe", "-p", "/commit", "--auto-approve", "--trust"]),
     ],
@@ -141,7 +142,7 @@ def test_an_unknown_cli_name_has_no_invocation():
 #
 # invoke_argv keeps argv[0] a BARE name (the assertions above pin that), which
 # only POSIX can launch. Windows CreateProcess ignores %PATHEXT% and cannot run
-# a batch file at all, so every npm-installed CLI — all five of them — died with
+# a batch file at all, so every npm-installed CLI — all six of them — died with
 # WinError 2 before these tests existed. _launch_command is the seam that fixes
 # it, and it is checked on every OS by faking the platform, because the bug is
 # invisible on the two platforms most of this suite runs on.
@@ -326,18 +327,57 @@ def test_a_batch_shim_with_spaces_everywhere_still_gets_its_arguments(
 
 
 @pytest.mark.parametrize(
-    ("rc", "timed_out", "expected"),
+    ("cli", "rc", "timed_out", "output", "expected"),
     [
-        (0, False, "ok"),
-        (1, False, "fail"),
-        (124, False, "fail"),  # a CLI's own exit 124 is not a timeout
-        (124, True, "timeout"),
-        (130, False, "abort"),
-        (137, False, "abort"),
+        ("codex", 130, False, "usage_limit_reached", "abort"),
+        ("codex", 0, False, "usage_limit_reached", "ok"),
+        ("codex", 124, True, "usage_limit_reached", "timeout"),
+        ("codex", 1, False, "usage_limit_reached", "quota"),
+        ("copilot", 1, False, "usage_limit_reached", "fail"),
+        ("agy", 1, False, "Usage limit reached", "fail"),
+        ("codex", 1, False, "ordinary error", "fail"),
+        ("codex", 124, False, "ordinary error", "fail"),
+        ("codex", 137, False, "ordinary error", "abort"),
     ],
 )
-def test_classify_matches_the_zsh_buckets(rc, timed_out, expected):
-    assert runner.classify(rc, timed_out=timed_out) == expected
+def test_classify_uses_abort_success_timeout_quota_failure_precedence(
+    cli, rc, timed_out, output, expected
+):
+    assert runner.classify(cli, rc, timed_out=timed_out, output=output) == expected
+
+
+@pytest.mark.parametrize(
+    ("cli", "message"),
+    [
+        ("codex", "usage_limit_reached"),
+        ("codex", "The usage limit has been reached"),
+        ("claude", '{"type":"rate_limit_error"}'),
+        ("claude", "Usage limit reached"),
+        ("vibe", "Rate limit exceeded. Please wait a moment before trying again."),
+        ("vibe", "Rate limits exceeded. Please wait a moment before trying again."),
+        ("grok", "You've hit the rate limit for your plan."),
+        ("grok", "You've reached your free Grok Build usage limit for now."),
+        (
+            "grok",
+            "API rate limit. Ask a team admin to purchase more credits for higher limits",
+        ),
+    ],
+)
+def test_only_supported_exact_quota_messages_are_classified(cli, message):
+    assert runner.classify(cli, 1, timed_out=False, output=message) == "quota"
+
+
+@pytest.mark.parametrize(
+    ("cli", "message"),
+    [
+        ("codex", "usage limit reached"),
+        ("claude", '{"type": "rate_limit_error"}'),
+        ("vibe", "rate limit exceeded"),
+        ("grok", "rate limit exceeded"),
+    ],
+)
+def test_quota_matching_does_not_expand_to_nearby_guesses(cli, message):
+    assert runner.classify(cli, 1, timed_out=False, output=message) == "fail"
 
 
 def test_a_negative_returncode_is_normalized_to_128_plus_signal():
@@ -356,6 +396,55 @@ def test_the_first_cli_to_exit_zero_wins(stub_cli, call_log, timing_log):
     assert called(call_log) == ["copilot"]
     assert outcomes(timing_log)[0][4] == "ok"
     assert "copilot" in out
+
+
+def test_run_step_exposes_the_winner(stub_cli):
+    stub_cli(per_cli={"copilot": 5})
+    result = runner.run_step("/commit", ("copilot", "agy"), stream=io.StringIO())
+    assert result == runner.StepResult(rc=0, winner="agy", quota_clis=())
+
+
+@POSIX_ONLY
+def test_quota_falls_through_and_is_returned_and_logged(sh_stub, timing_log):
+    sh_stub("codex", "echo usage_limit_reached\nexit 1\n")
+    sh_stub("claude", "exit 0\n")
+    stream = io.StringIO()
+
+    result = runner.run_step("/commit", ("codex", "claude"), stream=stream)
+
+    assert result == runner.StepResult(rc=0, winner="claude", quota_clis=("codex",))
+    assert [row[4] for row in outcomes(timing_log)] == ["quota", "ok"]
+    assert "quota/rate-limit exhausted" in stream.getvalue()
+
+
+@POSIX_ONLY
+def test_verbose_output_remains_live_and_can_still_classify_quota(
+    sh_stub, timing_log, capfd
+):
+    sh_stub("codex", "echo usage_limit_reached\nexit 1\n")
+    sh_stub("claude", "exit 0\n")
+
+    result = runner.run_step("/commit", ("codex", "claude"), verbose=True)
+
+    assert result.quota_clis == ("codex",)
+    assert result.winner == "claude"
+    assert "usage_limit_reached" in capfd.readouterr().out
+    assert [row[4] for row in outcomes(timing_log)] == ["quota", "ok"]
+
+
+@POSIX_ONLY
+def test_verbose_timeout_still_falls_through_without_waiting_for_the_child(
+    sh_stub, monkeypatch
+):
+    sh_stub("copilot", "sleep 30\n")
+    sh_stub("agy", "exit 0\n")
+    monkeypatch.setenv("AICP_STEP_TIMEOUT", "1")
+
+    started = time.monotonic()
+    result = runner.run_step("/commit", ("copilot", "agy"), verbose=True)
+
+    assert result == runner.StepResult(0, winner="agy")
+    assert time.monotonic() - started < 20
 
 
 def test_a_cli_missing_from_path_is_skipped(stub_cli, call_log):
@@ -438,7 +527,7 @@ def test_ctrl_c_reaches_a_cli_running_under_the_budget(sh_stub, tmp_path, timing
     sh_stub("agy", f'echo agy >> "{log}"\nexit 0\n')
     driver = (
         "import sys; from aicp.runner import run_step; "
-        "sys.exit(run_step('/commit', ['copilot', 'agy']))"
+        "sys.exit(run_step('/commit', ['copilot', 'agy']).rc)"
     )
     env = {**os.environ, "PYTHONPATH": str(Path(runner.__file__).parents[2])}
     child = subprocess.Popen(
@@ -641,8 +730,8 @@ def test_the_capture_log_is_created_private_and_unguessable(sh_stub, private_tmp
     assert f"aicp.{os.getpid()}.log" not in rows[0], "the capture-log name is still guessable"
 
 
-def test_verbose_creates_no_capture_log_at_all(stub_cli, private_tmpdir):
-    """Streaming mode captures nothing, so it has no temp file to protect."""
+def test_verbose_removes_its_capture_log_after_classification(stub_cli, private_tmpdir):
+    """Verbose mode now tees through the private log, then removes it."""
     stub_cli()
     assert run(chain=("copilot",), verbose=True)[0] == 0
     assert list(private_tmpdir.iterdir()) == []

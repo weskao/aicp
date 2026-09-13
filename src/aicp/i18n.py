@@ -98,6 +98,7 @@ CATALOG: dict[str, str] = {
     # ── the flow: spinners and the two step-skip notices ────────────────────
     "spin_precheck": "正在檢查工作目錄…",
     "spin_fetch": "正在 git fetch %s/%s…",
+    "active_chain": "▸ 順序：%s",
     "skip_commit_clean": "▸ 沒有未提交的變更 — 略過 /commit",
     "skip_commit_config": "▸ /commit 已在設定中關閉（AICP_DO_COMMIT=0）— 略過",
     "skip_push_synced": "▸ %s/%s 已經同步 — 略過 /safe-git-push",
@@ -115,6 +116,8 @@ CATALOG: dict[str, str] = {
     "result_ahead": "領先",
     "result_behind": "落後",
     "result_status": "狀態",
+    "commit_handler": "Commit 處理 CLI",
+    "push_handler": "Push 處理 CLI",
     "panel_value_header": "值",
     "panel_repo": "repo",
     "panel_branch": "分支",
@@ -125,6 +128,9 @@ CATALOG: dict[str, str] = {
     "remote_not_merged": "遠端未合入：",
     # ── Telegram ────────────────────────────────────────────────────────────
     "tg_timeout": "⏱️ aicp：%s 執行「%s」時 %s 逾時（超過 %ss 預算，%s），已切換下一個 CLI。",
+    "step_quota_note": "配額／速率限制已耗盡 — 本次執行略過",
+    "tg_quota": "⚠️ aicp：%s 執行「%s」時 %s 的配額／速率限制已耗盡 — 本次執行後續略過。",
+    "usage_limit_reached": "usage_limit_reached",
     "tg_unverifiable": "⚠️ aicp：分支 %s（%s）無法驗證 push —— %s/%s 無法解析（遠端不可達，或這個分支從未推送過）。新增 commit %s 個。",
     "tg_not_synced": "⚠️ aicp：分支 %s（%s）未與 %s/%s 同步",
     "tg_tbl_item": "項目",

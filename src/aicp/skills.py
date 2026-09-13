@@ -156,6 +156,7 @@ PLATFORMS: dict[str, Platform] = {
     ".copilot": Platform(".copilot", "AGENTS.md", _BOTH),
     ".gemini": Platform(".gemini", "GEMINI.md", _BOTH),  # the agy binary
     ".vibe": Platform(".vibe", "AGENTS.md", _BOTH),
+    ".grok": Platform(".grok", "AGENTS.md", _BOTH),
 }
 
 
@@ -189,8 +190,12 @@ def _platform(cli: CLI) -> Platform:
 
 
 def config_root(cli: CLI, home: Path | None = None) -> Path:
-    """This CLI's config dir, re-based on *home* (or the live ``$HOME``)."""
-    return (Path(home) if home is not None else Path.home()) / cli.config_dir.name
+    """This CLI's config dir, re-based on *home* or the live environment."""
+    if home is not None:
+        return Path(home) / cli.config_dir.name
+    if cli.name == "grok" and (grok_home := os.environ.get("GROK_HOME")):
+        return Path(grok_home)
+    return Path.home() / cli.config_dir.name
 
 
 def target_path(cli: CLI, skill: str, home: Path | None = None) -> Path:

@@ -273,7 +273,7 @@ def _skills_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
             text = _t(state.lang, msgid, english)
         print(f"  {color}{mark}{RESET} {status.cli:<8} {status.skill:<14} {text}", file=out)
     # One line for every CLI that has no config dir, rather than two rows
-    # each: they are not a problem to solve, and on a five-CLI roster they
+    # each: they are not a problem to solve, and on a six-CLI roster they
     # would otherwise be most of the list.
     skipped = sorted({s.cli for s in every if s.state == skills.NOT_INSTALLED})
     if skipped:

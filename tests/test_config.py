@@ -332,7 +332,18 @@ def test_chain_defaults_to_the_roster_order():
 
 def test_chain_accepts_a_prefix_and_appends_the_rest_in_roster_order():
     chain = resolve_cli_chain("vibe codex")
-    assert tuple(chain) == ("vibe", "codex", "copilot", "agy", "claude")
+    assert tuple(chain) == ("vibe", "codex", "copilot", "agy", "claude", "grok")
+
+
+def test_old_saved_chain_appends_grok_in_roster_order():
+    assert tuple(resolve_cli_chain("copilot agy codex claude vibe")) == (
+        "copilot",
+        "agy",
+        "codex",
+        "claude",
+        "vibe",
+        "grok",
+    )
 
 
 def test_chain_is_a_plain_sequence_of_str():
@@ -361,7 +372,7 @@ def test_the_chain_can_only_ever_contain_roster_names(cfg, order):
 
 def test_chain_comes_from_the_config_file(cfg):
     cfg("AICP_CLI_ORDER=vibe codex\n")
-    assert tuple(resolve().cli_chain) == ("vibe", "codex", "copilot", "agy", "claude")
+    assert tuple(resolve().cli_chain) == ("vibe", "codex", "copilot", "agy", "claude", "grok")
 
 
 def test_env_cli_order_beats_the_config_file(cfg, monkeypatch):

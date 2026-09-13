@@ -256,6 +256,49 @@ def test_a_branch_behind_the_remote_still_runs_safe_git_push(
     assert "/safe-git-push" in prompts(call_log)
 
 
+def test_flow_prints_the_configured_chain_before_the_first_attempt(
+    run, aicprc, repo_ahead, stub_cli, capsys
+):
+    stub_cli(clis=("copilot",))
+
+    run(repo_ahead)
+
+    out = capsys.readouterr().out
+    assert "chain: copilot → agy → codex → claude → vibe → grok" in out
+    assert out.index("chain:") < out.index("▸ /commit")
+    assert out.count("copilot") >= 3  # chain plus the two successful step handlers
+
+
+def test_result_presents_each_step_handler_or_a_dash_when_skipped(
+    run, aicprc, git_repo_synced, stub_cli, capsys
+):
+    stub_cli()
+    repo, _bare = git_repo_synced
+
+    assert run(repo) == 0
+
+    out = capsys.readouterr().out
+    assert "Commit handler" in out
+    assert "Push handler" in out
+    assert out.count("—") >= 2
+
+
+def test_result_presents_the_winning_handler_for_each_attempt(
+    run, aicprc, repo_ahead, monkeypatch, stub_cli, capsys
+):
+    stub_cli()
+
+    def fake_run_step(prompt, *_args, **_kwargs):
+        return runner.StepResult(0, winner="writer" if prompt == "/commit" else "pusher")
+
+    monkeypatch.setattr(cli.runner, "run_step", fake_run_step)
+    run(repo_ahead)
+
+    out = capsys.readouterr().out
+    assert "Commit handler" in out and "writer" in out
+    assert "Push handler" in out and "pusher" in out
+
+
 # ── the git-verified RESULT table ────────────────────────────────────────────
 
 
@@ -499,7 +542,7 @@ def test_cli_wires_notify_into_run_step(run, aicprc, repo_ahead, monkeypatch, st
 
     def fake_run_step(prompt, chain, *, cwd=None, notify=None, verbose=False, stream=None):
         seen[prompt] = notify
-        return 0
+        return runner.StepResult(0, winner=chain[0])
 
     monkeypatch.setattr(cli.runner, "run_step", fake_run_step)
     run(repo_ahead)
@@ -542,7 +585,7 @@ def test_verbose_is_passed_through_to_the_runner(
 
     def fake_run_step(prompt, chain, *, cwd=None, notify=None, verbose=False, stream=None):
         seen.append(verbose)
-        return 0
+        return runner.StepResult(0, winner=chain[0])
 
     monkeypatch.setattr(cli.runner, "run_step", fake_run_step)
     run(repo_ahead, "-v")
@@ -565,11 +608,37 @@ def test_an_aborted_step_stops_the_run(run, aicprc, repo_ahead, monkeypatch, stu
 
     def fake_run_step(prompt, chain, **_kwargs):
         seen.append(prompt)
-        return runner.ABORT_RC
+        return runner.StepResult(runner.ABORT_RC)
 
     monkeypatch.setattr(cli.runner, "run_step", fake_run_step)
     assert run(repo_ahead) == runner.ABORT_RC
     assert seen == ["/commit"]
+
+
+def test_quota_exclusion_spans_commit_and_push_but_resets_on_the_next_flow(
+    run, aicprc, repo_ahead, monkeypatch, stub_cli
+):
+    stub_cli()
+    seen: list[tuple[str, tuple[str, ...]]] = []
+
+    def fake_run_step(prompt, chain, **_kwargs):
+        active = tuple(chain)
+        seen.append((prompt, active))
+        if prompt == "/commit":
+            return runner.StepResult(0, winner="agy", quota_clis=("copilot",))
+        return runner.StepResult(0, winner=active[0])
+
+    monkeypatch.setattr(cli.runner, "run_step", fake_run_step)
+
+    assert run(repo_ahead) == 1
+    assert run(repo_ahead) == 1
+    assert [entry for entry in seen if entry[0] == "/commit"] == [
+        ("/commit", config.resolve().cli_chain),
+        ("/commit", config.resolve().cli_chain),
+    ]
+    push_chains = [chain for prompt, chain in seen if prompt == "/safe-git-push"]
+    assert len(push_chains) == 2
+    assert all("copilot" not in chain for chain in push_chains)
 
 
 # ── the CI escape hatches ────────────────────────────────────────────────────

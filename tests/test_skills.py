@@ -77,7 +77,7 @@ def test_claude_gets_safe_git_push_but_no_commit(configured):
     assert not (h / ".claude/skills/commit").exists()
 
 
-@pytest.mark.parametrize("name", ["codex", "copilot", "agy", "vibe"])
+@pytest.mark.parametrize("name", ["codex", "copilot", "agy", "vibe", "grok"])
 def test_non_claude_clis_get_both_skills(configured, name):
     h = configured(name)
     root = h / cli(name).config_dir.name
@@ -96,6 +96,19 @@ def test_agy_installs_into_gemini_not_agy(configured):
 
     assert (h / ".gemini/skills/commit/SKILL.md").is_file()
     assert not (h / ".agy").exists()
+
+
+def test_live_grok_home_overrides_the_default_root(home, monkeypatch, tmp_path):
+    grok_home = tmp_path / "grok-home"
+    monkeypatch.setenv("GROK_HOME", str(grok_home))
+    grok = cli("grok")
+
+    assert skills.config_root(grok) == grok_home
+    assert skills.config_root(grok, home=home) == home / ".grok"
+    assert [status.state for status in skills.full_status([grok])] == [
+        skills.NOT_INSTALLED,
+        skills.NOT_INSTALLED,
+    ]
 
 
 # ── per-CLI path rewriting ───────────────────────────────────────────────────
@@ -479,3 +492,4 @@ def test_platform_table_covers_the_whole_roster():
     assert {c.config_dir.name for c in ROSTER} == set(skills.PLATFORMS)
     assert skills.PLATFORMS[".claude"].skills == ("safe-git-push",)
     assert "commit" in skills.PLATFORMS[".gemini"].skills
+    assert "commit" in skills.PLATFORMS[".grok"].skills

@@ -16,7 +16,7 @@ port.
   remote, already pushed, so "in sync" is genuinely true rather than
   asserted against an unreachable ref.
 - ``stub_cli``                          — T2 (fallback-chain runner) and T4
-  (anything that shells out to a CLI to verify a result). Fakes all 5
+  (anything that shells out to a CLI to verify a result). Fakes all 6
   roster binary names onto PATH; T5 (the skills installer) needs NONE of
   this — it never invokes an AI CLI binary, so it only needs
   ``pinned_environment``'s HOME/config isolation.
@@ -141,7 +141,7 @@ def git_repo_synced(tmp_path) -> tuple[Path, Path]:
 #: a plain tuple here (not imported from aicp.contracts) so this harness has
 #: no import-order dependency on the package under test — but see
 #: test_cross_platform.py's roster-parity test, which pins the two in sync.
-ALL_CLIS: tuple[str, ...] = ("copilot", "agy", "codex", "claude", "vibe")
+ALL_CLIS: tuple[str, ...] = ("copilot", "agy", "codex", "claude", "vibe", "grok")
 
 _SH_STUB = """#!/bin/sh
 {{
@@ -176,7 +176,7 @@ def call_log(tmp_path) -> Path:
 def stub_cli(tmp_path, call_log, monkeypatch):
     """Factory: install fake executables for AI CLI binary names onto PATH.
 
-    ``stub_cli()`` (defaults) stubs all 5 :data:`ALL_CLIS` names, each
+    ``stub_cli()`` (defaults) stubs all 6 :data:`ALL_CLIS` names, each
     exiting 0 and appending one TAB-separated line — ``<cli>\\t<arg1>\\t
     <arg2>\\t...`` (the CLI's own arguments, not argv[0]/the program name
     itself) — to :func:`call_log` per invocation. Every fallback name
