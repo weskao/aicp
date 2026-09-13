@@ -1,3 +1,8 @@
+## [0.2.1] - 2026-09-13
+
+### ⚙️ Miscellaneous Tasks
+
+- Refresh uv lockfile for v0.2.0
 ## [0.2.0] - 2026-09-13
 
 ### 🚀 Features
@@ -40,6 +45,7 @@
 
 - Page Telegram on a failed push
 - Ignore local omc state
+- **release:** Bump version to 0.2.0
 ## [0.1.0] - 2026-09-12
 
 ### 🚀 Features
