@@ -653,8 +653,17 @@ def _panel(
         )
     title = f"{_t(state.lang, 'config_title', 'aicp config')} (v{__version__})"
     if selected is not None:
+        # Reserve the widest help line ANY row can show, not just the selected
+        # one's — otherwise the frame narrows and widens as the cursor moves
+        # across rows with shorter and longer help text (render_panel sizes
+        # its own width off the notes it is handed).
+        help_budget = frame_columns - 4
+        fitted_help = [_fit(_t(state.lang, *row.help), help_budget) for row in ROWS]
+        reserve = max(width(h) for h in fitted_help)
+        help_line = fitted_help[selected - 1]
+        help_line += " " * (reserve - width(help_line))
         texts = [
-            _t(state.lang, *ROWS[selected - 1].help),
+            help_line,
             "",
             _t(state.lang, "config_keys_tui", "↑↓ select · ←→ change · ⏎ change/run · q/Ctrl-C quit · saves as you go"),
         ]

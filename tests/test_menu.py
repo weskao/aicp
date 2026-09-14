@@ -146,6 +146,16 @@ def test_cli_order_motion_runs_the_other_way_too():
     assert _plain(frames[-1]) == " → ".join(after)
 
 
+def test_selecting_a_different_row_does_not_resize_the_panel():
+    """Rows carry help text of very different lengths — the box must be sized
+    for the longest one up front, not reflow as the cursor passes each row."""
+    state = MenuState(Path("menu.aicprc"), True, True, "en", list(ROSTER_NAMES))
+
+    widths = {width(_panel(state, selected=i)[0]) for i in range(1, len(ROWS) + 1)}
+
+    assert len(widths) == 1, "the frame width changed when a different row was selected"
+
+
 @pytest.mark.parametrize("columns, lines", [(80, 24), (100, 24), (60, 24), (100, 14)])
 def test_the_panel_fits_the_terminal_it_draws_on(columns, lines, monkeypatch):
     """Every line inside the terminal, in both languages.
