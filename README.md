@@ -24,6 +24,7 @@ push that never reached the remote.
 ## Requirements
 
 - Python 3.10 or newer
+- [`uv`](https://docs.astral.sh/uv/) — the install path below
 - `git`
 - At least one of the six AI CLIs above on `PATH`
 
