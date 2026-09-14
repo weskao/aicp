@@ -1,3 +1,8 @@
+## [0.4.0] - 2026-09-14
+
+### 🚜 Refactor
+
+- **agents:** Centralize agent definitions
 ## [0.3.1] - 2026-09-14
 
 ### 🐛 Bug Fixes
@@ -9,6 +14,7 @@
 - **readme:** Document releasing and the wheel version check
 - Remove CI section from README.md
 - Add uv requirement note to README.md
+- **changelog:** Release v0.3.1
 ## [0.3.0] - 2026-09-14
 
 ### 🐛 Bug Fixes
