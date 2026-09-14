@@ -166,36 +166,6 @@ that, and even then the original is moved aside to `<name>.bak` (numbered
 `.bak.1`, `.bak.2`, … so a second forced install never clobbers the first
 backup) before aicp writes its own copy.
 
-### This repo's own CI
-
-`.github/workflows/ci.yml` runs the suite on **macOS, Linux, and Windows** in
-parallel (`fail-fast: false`, so one platform failing still tells you about the
-other two), then builds the wheel, installs it into a throwaway venv, and checks
-three things about the *installed* package rather than the checkout: that the
-console script runs, that it reports the version in `pyproject.toml`, and that
-the vendored skills survived packaging.
-
-The version check exists because the distribution name (`aicp-cli`) and the
-import name (`aicp`) differ. `__init__` reads its version from installed
-metadata, so asking for the wrong one doesn't raise — it falls through to
-`0+unknown` and every version display goes quietly wrong while the rest of CI
-stays green.
-
-A failed run on a `push` also sends one Telegram message. Failure-only is
-deliberate: a notification on every green push is one nobody reads.
-
-The credentials are **repo secrets — never committed**. The workflow reads them
-through `${{ secrets.* }}` and skips quietly when they're unset, so a fork or a
-fresh clone gets no second red X on top of the real failure. To enable it:
-
-```sh
-gh secret set TELEGRAM_BOT_TOKEN -R <owner>/<repo>   # paste the bot token
-gh secret set TELEGRAM_CHAT_ID   -R <owner>/<repo>   # paste the chat id
-```
-
-Verify with `gh secret list -R <owner>/<repo>` — GitHub shows the names and
-timestamps only; secret values can never be read back, by you or by CI logs.
-
 ### Releasing
 
 `.github/workflows/release.yml` runs on a `v*` tag. It repeats the full
