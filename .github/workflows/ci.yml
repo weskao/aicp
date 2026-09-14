@@ -45,6 +45,7 @@ jobs:
         run: |
           import os
           import pathlib
+          import re
           import subprocess
           import tempfile
 
@@ -60,6 +61,24 @@ jobs:
               )
               suffix = ".exe" if os.name == "nt" else ""
               subprocess.run([scripts / f"aicp{suffix}", "--help"], check=True)
+
+              # The distribution name (aicp-cli) and the import name (aicp)
+              # differ, so __init__'s importlib.metadata lookup can miss and
+              # fall back to "0+unknown" without failing anything. Compare the
+              # installed wheel's own report against pyproject.toml.
+              expected, = re.findall(
+                  r'^version = "(.+)"$',
+                  pathlib.Path("pyproject.toml").read_text(encoding="utf-8"),
+                  re.MULTILINE,
+              )
+              reported = subprocess.run(
+                  [scripts / f"aicp{suffix}", "--version"],
+                  check=True,
+                  capture_output=True,
+                  text=True,
+              ).stdout.strip()
+              assert reported == f"aicp {expected}", f"{reported!r} != 'aicp {expected}'"
+              print("version OK:", reported)
 
               # The vendored skills must survive packaging. Without the
               # force-include key in pyproject.toml the wheel ships no skill

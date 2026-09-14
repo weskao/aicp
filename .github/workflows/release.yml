@@ -40,6 +40,15 @@ jobs:
           uv venv .release-venv
           uv pip install --python .release-venv/bin/python --no-index dist/*.whl
           .release-venv/bin/aicp --help
+          # The wheel must report the version being tagged. This catches both a
+          # tag/pyproject mismatch and the silent `0+unknown` that appears when
+          # __init__ asks importlib.metadata for the wrong distribution name.
+          reported="$(.release-venv/bin/aicp --version)"
+          expected="aicp ${GITHUB_REF_NAME#v}"
+          if [ "$reported" != "$expected" ]; then
+            echo "::error::wheel reports '$reported', expected '$expected'"
+            exit 1
+          fi
       - name: Publish to PyPI
         run: uv publish --trusted-publishing always
 
