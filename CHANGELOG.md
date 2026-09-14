@@ -1,3 +1,21 @@
+## [0.3.0] - 2026-09-14
+
+### 🐛 Bug Fixes
+
+- **version:** Derive __version__ from package metadata
+
+### 💼 Other
+
+- **pypi:** [**breaking**] Publish as aicp-cli
+
+### 📚 Documentation
+
+- **readme:** Show install commands for pinning and upgrading
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Publish wheels to PyPI via trusted publishing
+- Assert the built wheel reports the right version
 ## [0.2.1] - 2026-09-13
 
 ### ⚙️ Miscellaneous Tasks
