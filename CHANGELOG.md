@@ -1,3 +1,14 @@
+## [0.3.1] - 2026-09-14
+
+### 🐛 Bug Fixes
+
+- **menu:** Stop config panel resizing on row selection
+
+### 📚 Documentation
+
+- **readme:** Document releasing and the wheel version check
+- Remove CI section from README.md
+- Add uv requirement note to README.md
 ## [0.3.0] - 2026-09-14
 
 ### 🐛 Bug Fixes
@@ -16,7 +27,12 @@
 
 - **release:** Publish wheels to PyPI via trusted publishing
 - Assert the built wheel reports the right version
+- **release:** V0.3.0
 ## [0.2.1] - 2026-09-13
+
+### 📚 Documentation
+
+- **changelog:** Release v0.2.1
 
 ### ⚙️ Miscellaneous Tasks
 

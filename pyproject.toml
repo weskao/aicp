@@ -2,7 +2,7 @@
 # PyPI distribution name only — the `aicp` name was taken in 2021 by an
 # unrelated project. The command, import path and repo stay `aicp`.
 name = "aicp-cli"
-version = "0.3.0"
+version = "0.3.1"
 description = "AI commit + push, with a git-verified result summary"
 readme = "README.md"
 requires-python = ">=3.10"
