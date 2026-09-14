@@ -171,7 +171,15 @@ backup) before aicp writes its own copy.
 `.github/workflows/ci.yml` runs the suite on **macOS, Linux, and Windows** in
 parallel (`fail-fast: false`, so one platform failing still tells you about the
 other two), then builds the wheel, installs it into a throwaway venv, and checks
-that the console script runs and the vendored skills survived packaging.
+three things about the *installed* package rather than the checkout: that the
+console script runs, that it reports the version in `pyproject.toml`, and that
+the vendored skills survived packaging.
+
+The version check exists because the distribution name (`aicp-cli`) and the
+import name (`aicp`) differ. `__init__` reads its version from installed
+metadata, so asking for the wrong one doesn't raise — it falls through to
+`0+unknown` and every version display goes quietly wrong while the rest of CI
+stays green.
 
 A failed run on a `push` also sends one Telegram message. Failure-only is
 deliberate: a notification on every green push is one nobody reads.
@@ -187,6 +195,22 @@ gh secret set TELEGRAM_CHAT_ID   -R <owner>/<repo>   # paste the chat id
 
 Verify with `gh secret list -R <owner>/<repo>` — GitHub shows the names and
 timestamps only; secret values can never be read back, by you or by CI logs.
+
+### Releasing
+
+`.github/workflows/release.yml` runs on a `v*` tag. It repeats the full
+lint/test/build pass, installs the wheel into a throwaway venv, and refuses to
+upload unless that wheel reports the version being tagged — so a tag that
+disagrees with `pyproject.toml` fails before anything reaches PyPI. It then
+publishes with Trusted Publishing (OIDC — there is no API token stored in this
+repo) and attaches the wheel, sdist and `SHA256SUMS` to the GitHub release.
+
+Checksums are generated *after* publishing on purpose: `uv publish` uploads
+everything in `dist/`, and `SHA256SUMS` is not a distribution.
+
+A tag runs the workflow file **as it existed at that tag**, so a release that
+failed to publish can't be repaired by re-running the old tag — the fix isn't
+in that tree. Bump the version and tag again.
 
 ## Configuration
 
