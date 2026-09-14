@@ -185,6 +185,25 @@ class _Parser(argparse.ArgumentParser):
         raise SystemExit(1)
 
 
+def _normalize_argv(argv: Sequence[str], parser: argparse.ArgumentParser) -> list[str]:
+    """Let a long flag's ``--`` be omitted: ``aicp config`` == ``aicp --config``.
+
+    The allowed bare words are read off *parser* itself (every ``--xxx`` it
+    defines), so a flag added to :func:`build_parser` gains this for free with
+    no second list to keep in sync. A word already starting with ``-`` is
+    left alone — this only fills in a *missing* prefix, never reinterprets
+    one that is already there (``--conf`` still isn't ``--config``: that's
+    ``allow_abbrev=False``'s job, untouched by this).
+    """
+    long_flags = {
+        opt[2:]
+        for action in parser._actions  # noqa: SLF001 - no public enumerator exists
+        for opt in action.option_strings
+        if opt.startswith("--")
+    }
+    return [f"--{arg}" if arg in long_flags else arg for arg in argv]
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="aicp",
@@ -192,6 +211,11 @@ def build_parser() -> argparse.ArgumentParser:
         # English: it is argparse's, not aicp's, and gettext-patching a stdlib
         # module to translate four words is not worth the surprise.
         description=t("help_description", "AI commit + push, with a git-verified result summary."),
+        epilog=t(
+            "help_epilog",
+            "every flag above also works without its leading `--` "
+            "(`aicp config` is the same as `aicp --config`).",
+        ),
         # No abbreviation matching: `--conf` must not silently become
         # `--config` (which runs the settings menu instead of a commit).
         allow_abbrev=False,
@@ -576,8 +600,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+    raw = sys.argv[1:] if argv is None else argv
     try:
-        args = parser.parse_args(argv)
+        args = parser.parse_args(_normalize_argv(raw, parser))
         _reject_orphan_sub_flags(parser, args)
     except SystemExit as exc:  # --help/--version (0), or a bad flag (1)
         return int(exc.code or 0)

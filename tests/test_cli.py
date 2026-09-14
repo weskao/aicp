@@ -174,6 +174,32 @@ def test_flags_are_not_abbreviation_matched(run, aicprc, git_repo, stub_cli, cal
     assert calls(call_log) == []
 
 
+def test_a_bare_flag_name_works_the_same_as_its_dashed_form(
+    run, aicprc, git_repo, stub_cli, call_log, monkeypatch
+):
+    """``aicp config`` == ``aicp --config``."""
+    stub_cli()
+    opened: list[int] = []
+    monkeypatch.setattr(cli.menu, "config_menu", lambda **_kw: opened.append(1) or 0)
+    assert run(git_repo, "config") == 0
+    assert len(opened) == 1
+    assert calls(call_log) == []
+
+
+def test_a_bare_word_that_is_not_a_known_flag_still_fails(
+    run, aicprc, git_repo, stub_cli, call_log
+):
+    stub_cli()
+    assert run(git_repo, "not-a-flag") != 0
+    assert calls(call_log) == []
+
+
+def test_help_mentions_the_optional_dashes(run, aicprc, git_repo, stub_cli, call_log, capsys):
+    stub_cli()
+    assert run(git_repo, "--help") == 0
+    assert "aicp config" in capsys.readouterr().out
+
+
 # ── repo / branch guards ─────────────────────────────────────────────────────
 
 

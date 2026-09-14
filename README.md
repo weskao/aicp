@@ -121,6 +121,9 @@ through the fallback chain, then `/safe-git-push` the same way, then prints
 the git-verified result table described above. `-v`/`--verbose` streams each
 CLI's raw output live instead of showing a spinner.
 
+Every long flag also works without its leading `--` — `aicp config` is the
+same as `aicp --config`.
+
 ![aicp run: commit, push, and the git-verified result table](docs/images/aicp-run.png)
 
 `aicp --config` is one menu for everything that isn't "commit and push

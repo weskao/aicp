@@ -213,6 +213,7 @@ CATALOG: dict[str, str] = {
     "help_install_skills": "把內建的 skills 安裝到每個已設定的 CLI",
     "help_yes": "--install-skills：實際寫入（不加就只是預覽）",
     "help_force": "--install-skills：覆蓋別人的同名檔案，並留下 .bak",
+    "help_epilog": "以上任一 flag 都可以省略開頭的 `--`（`aicp config` 等同 `aicp --config`）。",
 }
 
 
