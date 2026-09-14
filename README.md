@@ -193,6 +193,15 @@ and skill installation/status. To maintain an agent, edit its entry here.
 Registry order supplies the default fallback order; `aicp_cli_order` still
 controls the user's preferred order.
 
+Use `~/` paths and bare executable names for entries shared across macOS,
+Linux, and Windows. Python resolves `~` to the native home directory
+(`USERPROFILE` on Windows); forward slashes work on all three systems.
+Absolute paths are specific to the host OS; in JSON, a Windows path can use
+`C:/Users/name/.codex` or escaped backslashes (`C:\\Users\\name\\.codex`).
+Executable lookup uses `PATH` and, on Windows, `PATHEXT`; the runner handles
+both native executables and `.cmd`/`.bat` launchers. CI runs the registry
+integration tests and installed-wheel checks on all three operating systems.
+
 | Agent field | Meaning |
 | --- | --- |
 | `executable` | Binary name resolved on `PATH`, or an absolute executable path. Separate from the stable agent ID used in fallback order and history. |

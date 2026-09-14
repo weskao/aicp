@@ -13,7 +13,8 @@ import aicp
 from aicp.agents import load_agents
 
 
-def test_registry_edit_reaches_commands_and_skills(tmp_path):
+@pytest.mark.parametrize("location", ["home", "absolute", "environment"])
+def test_registry_edit_reaches_commands_and_skills(tmp_path, location):
     package = Path(aicp.__file__).parent
     registry = package / "agents.json"
     assert registry.is_file(), "agent definitions must ship with the package"
@@ -22,22 +23,28 @@ def test_registry_edit_reaches_commands_and_skills(tmp_path):
 
     shutil.copytree(VENDOR_DIR, tmp_path / "aicp/_skills_data", dirs_exist_ok=True)
     data = json.loads(registry.read_text())
+    root = Path.home() / "custom agent 測試" / "config"
     data["agents"]["codex"].update(
         executable=sys.executable,
-        config_dir="~/custom/agent",
+        config_dir="~/custom agent 測試/config" if location == "home" else str(root),
         skills_dir="custom-skills",
         args=["-c", "import sys; print(sys.argv[1])", "{prompt}"],
     )
+    if location == "environment":
+        data["agents"]["codex"].update(
+            config_dir="~/unused", config_dir_env="AICP_TEST_AGENT_HOME"
+        )
     (tmp_path / "aicp/agents.json").write_text(json.dumps(data))
     result = subprocess.run(
         [sys.executable, "-c", """
 from pathlib import Path
+import os
 from aicp import cli, gitflow, runner, skills
 from aicp.contracts import ROSTER
 agent = next(c for c in ROSTER if c.name == 'codex')
-root = Path.home() / 'custom/agent'
+root = Path(os.environ['AICP_TEST_AGENT_HOME'])
 root.mkdir(parents=True)
-assert agent.config_dir == root
+assert skills.config_root(agent) == root
 assert gitflow.preflight(['codex'])[0]
 cli._nudge(['codex'])
 assert skills.missing_skills(agent) == ('commit', 'safe-git-push')
@@ -47,15 +54,21 @@ assert target.is_file()
 assert skills.detect(agent, 'commit') == skills.CURRENT
 assert skills.missing_skills(agent) == ()
 assert skills.full_status([agent])[0].target == target
-assert skills.config_root(agent, Path.home()) == root
 prompt = 'literal $HOME; {prompt} with spaces'
 assert runner.invoke_argv('codex', prompt)[-1] == prompt
 assert runner.run_step(prompt, ['codex']).rc == 0
 """],
         cwd=tmp_path,
-        env={**os.environ, "PYTHONPATH": str(tmp_path), "PATH": ""},
+        env={
+            **os.environ,
+            "PYTHONPATH": str(tmp_path),
+            "PATH": "",
+            "PYTHONUTF8": "1",
+            "AICP_TEST_AGENT_HOME": str(root),
+        },
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
