@@ -8,9 +8,8 @@ vendored copies under ``skills/`` into each configured CLI.
 
 Three rules make it safe:
 
-* **Targets are keyed on** :attr:`aicp.contracts.CLI.config_dir`, never on the
-  binary name — ``agy`` reads ``~/.gemini``, and ``~/.agy`` does not exist.
-  :data:`PLATFORMS` is that table, keyed by the config dir's own name.
+* **Targets come from agents.json**, never from the binary name — ``agy``
+  reads ``~/.gemini``, and ``~/.agy`` does not exist.
 * **Anything aicp did not write, byte for byte, is the user's**
   (:data:`FOREIGN`). It is never overwritten without an explicit
   ``force=True``; a ``--yes``-style non-interactive run installs only what's
@@ -24,11 +23,9 @@ Three rules make it safe:
   config dir is the skill itself. Pre-0.2 in-place ``.aicp-version`` sidecars
   are folded into that file and deleted on the next install.
 
-All public functions take ``home=`` and otherwise resolve :func:`Path.home`
-at call time (i.e. ``$HOME`` as it is *now*), so a test with a fake ``$HOME``
-can never reach the developer's real config dirs. The per-CLI directory name
-still comes from ``config_dir.name`` — from the contract, not from the binary
-name.
+All public functions take ``home=`` to rebase home-relative registry paths
+and otherwise resolve :func:`Path.home` at call time. Absolute registry paths
+remain absolute; environment overrides apply only when home is omitted.
 """
 
 from __future__ import annotations
@@ -42,6 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import __version__
+from .agents import AGENTS
 from .contracts import (
     CLI,
     ROSTER,
@@ -166,15 +164,10 @@ class Platform:
     skills: tuple[str, ...]
 
 
-_BOTH = ("commit", "safe-git-push")
-
 PLATFORMS: dict[str, Platform] = {
-    ".claude": Platform(".claude", "CLAUDE.md", ("safe-git-push",)),
-    ".codex": Platform(".codex", "AGENTS.md", _BOTH),
-    ".copilot": Platform(".copilot", "AGENTS.md", _BOTH),
-    ".gemini": Platform(".gemini", "GEMINI.md", _BOTH),  # the agy binary
-    ".vibe": Platform(".vibe", "AGENTS.md", _BOTH),
-    ".grok": Platform(".grok", "AGENTS.md", _BOTH),
+    name: Platform(name, agent.memory_file, agent.skills)
+    for agent in AGENTS.values()
+    for name in (Path(agent.config_dir).name,)
 }
 
 
@@ -204,20 +197,21 @@ class InstallResult:
 
 
 def _platform(cli: CLI) -> Platform:
-    return PLATFORMS[cli.config_dir.name]
+    agent = AGENTS[cli.name]
+    return Platform(Path(agent.config_dir).name, agent.memory_file, agent.skills)
 
 
 def config_root(cli: CLI, home: Path | None = None) -> Path:
     """This CLI's config dir, re-based on *home* or the live environment."""
-    if home is not None:
-        return Path(home) / cli.config_dir.name
-    if cli.name == "grok" and (grok_home := os.environ.get("GROK_HOME")):
-        return Path(grok_home)
-    return Path.home() / cli.config_dir.name
+    return AGENTS[cli.name].config_root(home)
 
 
 def target_path(cli: CLI, skill: str, home: Path | None = None) -> Path:
-    return config_root(cli, home) / SKILLS[skill].rel_target
+    return (
+        config_root(cli, home)
+        / AGENTS[cli.name].skills_dir
+        / SKILLS[skill].rel_target.relative_to("skills")
+    )
 
 
 # ── the state file ───────────────────────────────────────────────────────────
@@ -455,7 +449,7 @@ def _inspect(cli: CLI, skill: str, home: Path | None) -> tuple[str, str | None]:
     if not root.is_dir():
         return NOT_INSTALLED, None
     spec = SKILLS[skill]
-    target = root / spec.rel_target
+    target = target_path(cli, skill, home)
     if not target.exists():
         return MISSING, None
 
@@ -500,7 +494,7 @@ def missing_skills(cli: CLI, home: Path | None = None) -> tuple[str, ...]:
     return tuple(
         name
         for name in _platform(cli).skills
-        if not (root / SKILLS[name].rel_target).exists()
+        if not target_path(cli, name, home).exists()
     )
 
 

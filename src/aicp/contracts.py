@@ -17,6 +17,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from .agents import AGENTS
+
 __all__ = [
     "CLI",
     "ROSTER",
@@ -35,7 +37,7 @@ class CLI:
     equivalents) both key off ``name``; T2 additionally needs ``config_dir``
     to detect whether a CLI is configured at all before trying to run it.
 
-    ``name`` is the literal binary invoked on PATH (``shutil.which(name)``).
+    ``name`` is the stable agent ID; agents.json supplies its executable.
     ``config_dir`` is where that CLI keeps its own config/session state — and
     is deliberately a SEPARATE field, not derived from ``name``, because it
     does not always match: the ``agy`` binary (this project's wrapper name
@@ -53,13 +55,10 @@ class CLI:
 # saved-chain compatibility. T3 is the consumer that reorders/persists a
 # chain derived from this; T2 and T4 must never hardcode this tuple themselves
 # — import it.
-ROSTER: tuple[CLI, ...] = (
-    CLI(name="copilot", config_dir=Path.home() / ".copilot"),
-    CLI(name="agy", config_dir=Path.home() / ".gemini"),  # the trap — see CLI's docstring
-    CLI(name="codex", config_dir=Path.home() / ".codex"),
-    CLI(name="claude", config_dir=Path.home() / ".claude"),
-    CLI(name="vibe", config_dir=Path.home() / ".vibe"),
-    CLI(name="grok", config_dir=Path.home() / ".grok"),
+# Resolve defaults here; environment overrides stay live in config_root.
+ROSTER: tuple[CLI, ...] = tuple(
+    CLI(name=name, config_dir=agent.config_root(Path.home()))
+    for name, agent in AGENTS.items()
 )
 
 # The resolved fallback chain — whatever order a run will actually try its

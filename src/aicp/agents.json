@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "agents": {
+    "copilot": {
+      "executable": "copilot",
+      "config_dir": "~/.copilot",
+      "memory_file": "AGENTS.md",
+      "skills_dir": "skills",
+      "skills": ["commit", "safe-git-push"],
+      "args": ["-p", "{prompt}", "--allow-all", "--disable-builtin-mcps", "--no-auto-update"]
+    },
+    "agy": {
+      "executable": "agy",
+      "config_dir": "~/.gemini",
+      "memory_file": "GEMINI.md",
+      "skills_dir": "skills",
+      "skills": ["commit", "safe-git-push"],
+      "args": ["-p", "{prompt}", "--dangerously-skip-permissions", "--new-project"]
+    },
+    "codex": {
+      "executable": "codex",
+      "config_dir": "~/.codex",
+      "memory_file": "AGENTS.md",
+      "skills_dir": "skills",
+      "skills": ["commit", "safe-git-push"],
+      "args": ["exec", "--dangerously-bypass-approvals-and-sandbox", "{prompt}"]
+    },
+    "claude": {
+      "executable": "claude",
+      "config_dir": "~/.claude",
+      "memory_file": "CLAUDE.md",
+      "skills_dir": "skills",
+      "skills": ["safe-git-push"],
+      "args": ["-p", "{prompt}", "--dangerously-skip-permissions", "--strict-mcp-config"]
+    },
+    "vibe": {
+      "executable": "vibe",
+      "config_dir": "~/.vibe",
+      "memory_file": "AGENTS.md",
+      "skills_dir": "skills",
+      "skills": ["commit", "safe-git-push"],
+      "args": ["-p", "{prompt}", "--auto-approve", "--trust"]
+    },
+    "grok": {
+      "executable": "grok",
+      "config_dir": "~/.grok",
+      "config_dir_env": "GROK_HOME",
+      "memory_file": "AGENTS.md",
+      "skills_dir": "skills",
+      "skills": ["commit", "safe-git-push"],
+      "args": ["-p", "{prompt}", "--always-approve", "--no-subagents"]
+    }
+  }
+}

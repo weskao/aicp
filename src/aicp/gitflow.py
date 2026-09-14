@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ._utils import BOLD, DIM, GREEN, RED, RESET, YELLOW, have, run_interruptible
+from .agents import executable
 from .i18n import t
 from .secrets import report_lines, scan
 
@@ -188,7 +189,7 @@ def preflight(chain: Sequence[str]) -> tuple[bool, list[str]]:
     alone and succeeds with no AI CLI installed. A blanket pre-flight would
     turn that into a failure — a regression wearing a check's clothing.
     """
-    if any(have(cli) for cli in chain):
+    if any(have(executable(cli)) for cli in chain):
         return True, []
     return False, [
         f"{RED}" + t("no_cli_found", "✗ no AI CLI found on PATH") + RESET,

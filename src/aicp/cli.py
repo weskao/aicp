@@ -38,6 +38,7 @@ from typing import NoReturn
 
 from . import __version__, config, gitflow, i18n, menu, notify, present, runner, skills
 from ._utils import BLUE, BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW, have
+from .agents import executable
 from .contracts import ROSTER
 from .i18n import t
 
@@ -152,7 +153,7 @@ def _nudge(chain: Sequence[str]) -> None:
     target, no reads, no sidecar parsing).
     """
     for name in chain:
-        if not have(name):
+        if not have(executable(name)):
             continue
         entry = _BY_NAME.get(name)
         if entry is None:

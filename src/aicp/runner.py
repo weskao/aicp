@@ -60,6 +60,7 @@ from aicp._utils import (
     have,
     run_interruptible,
 )
+from aicp.agents import AGENTS
 from aicp.contracts import NotifyFn
 from aicp.i18n import t
 from aicp.present import Spinner
@@ -103,27 +104,6 @@ class StepResult:
 # budget.py's stated invariant true: a bad config value never bricks aicp.
 _MAX_DEADLINE = 365 * 24 * 3600
 
-# Per-CLI flags, ported flag-for-flag from _aicp_invoke. Each branch skips MCP
-# server startup where the CLI exposes a way to — /commit and /safe-git-push
-# are plain git prompts, no MCP tool use — which measurably shortens cold start;
-# codex and agy showed no consistent gain, so they keep their existing flags.
-_FLAGS: dict[str, tuple[str, ...]] = {
-    # agy resumes its last session/workspace by default, ignoring $PWD entirely
-    # unless --new-project pins it to the caller's cwd.
-    "agy": ("--dangerously-skip-permissions", "--new-project"),
-    "claude": ("--dangerously-skip-permissions", "--strict-mcp-config"),
-    "copilot": ("--allow-all", "--disable-builtin-mcps", "--no-auto-update"),
-    "grok": ("--always-approve", "--no-subagents"),
-    # --trust is not the approval flag (--auto-approve is) and is not optional:
-    # vibe asks once, interactively, before it will touch an untrusted
-    # directory, and its own --help names --trust as the answer for
-    # non-interactive automation. Without it the very first aicp run in a new
-    # repo blocks on a prompt nobody can see behind the spinner until the budget
-    # kills it — a hang presented as a timeout. Per-invocation, never written to
-    # vibe's trusted_folders.toml, so aicp leaves no persistent trust behind.
-    "vibe": ("--auto-approve", "--trust"),
-}
-
 # Literal signals confirmed by T1. Copilot and agy are intentionally absent:
 # neither had a supported quota signature, and broad guesses would turn an
 # ordinary failure into a run-scoped exclusion.
@@ -153,10 +133,10 @@ def invoke_argv(cli: str, prompt: str) -> list[str] | None:
     silently returned 0 for a name it did not know, which would be read here as
     "that CLI succeeded" without anything having run.
     """
-    if cli == "codex":  # the only one that takes the prompt positionally
-        return ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt]
-    flags = _FLAGS.get(cli)
-    return None if flags is None else [cli, "-p", prompt, *flags]
+    agent = AGENTS.get(cli)
+    if agent is None:
+        return None
+    return [agent.executable, *(prompt if arg == "{prompt}" else arg for arg in agent.args)]
 
 
 # ── Windows: launching an npm shim ───────────────────────────────────────────
@@ -187,7 +167,7 @@ _BATCH_SUFFIXES = frozenset({".cmd", ".bat"})
 # is expanded inside quotes too. There is no sound, portable escape for either
 # one on a cmd command line, so a launch carrying them is refused rather than
 # half-escaped. aicp never builds one — prompts are slash-command names and the
-# flags are fixed literals in _FLAGS — so this is a tripwire, not a limit
+# flags are literals in the bundled agents.json — so this is a tripwire, not a limit
 # anyone meets.
 # ponytail: fail closed; write a real cmd quoter only if aicp ever has to pass
 # arbitrary free text as a prompt on Windows.
@@ -447,7 +427,7 @@ def run_step(
     with _capture_file() as (capture, capture_path):
         for cli in chain:
             argv = invoke_argv(cli, prompt)
-            if argv is None or not have(cli):
+            if argv is None or not have(argv[0]):
                 continue
 
             # An earlier run already found this one out of quota. Skipping is

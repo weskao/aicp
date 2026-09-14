@@ -37,7 +37,8 @@ uv tool install aicp-cli             # latest release
 uv tool install aicp-cli==X.Y.Z      # pin to a specific version
 ```
 
-The distribution is `aicp-cli`; the command it installs is `aicp`. (The plain
+The distribution is [`aicp-cli`](https://pypi.org/project/aicp-cli/); the command
+it installs is `aicp`. (The plain
 `aicp` name on PyPI belongs to an unrelated 2021 project — don't install it.)
 Replace `X.Y.Z` with the release version you want; re-running either command
 switches an existing install to that version.
@@ -184,6 +185,35 @@ failed to publish can't be repaired by re-running the old tag — the fix isn't
 in that tree. Bump the version and tag again.
 
 ## Configuration
+
+Agent definitions live in [`src/aicp/agents.json`](src/aicp/agents.json),
+bundled with the installed package. Both `aicp` and `aicp --config` use this
+registry for executable lookup, invocation arguments, config directories,
+and skill installation/status. To maintain an agent, edit its entry here.
+Registry order supplies the default fallback order; `aicp_cli_order` still
+controls the user's preferred order.
+
+| Agent field | Meaning |
+| --- | --- |
+| `executable` | Binary name resolved on `PATH`, or an absolute executable path. Separate from the stable agent ID used in fallback order and history. |
+| `config_dir` | Absolute path or `~/`-relative directory; home is resolved when used. |
+| `config_dir_env` | Optional environment variable overriding that directory (currently `GROK_HOME`). |
+| `skills_dir` | Relative directory inside `config_dir` where skills are installed. |
+| `skills` | Vendored skills to install: `commit` and/or `safe-git-push`. Claude keeps its existing `/commit`. |
+| `memory_file` | Instruction filename used when adapting vendored skill text. Project directory references use the basename of `config_dir`. |
+| `args` | Argument array containing exactly one standalone `{prompt}`, replaced with the complete prompt as one argument. No shell evaluation. |
+
+The JSON envelope has `version: 1` and an `agents` object keyed by stable
+agent IDs. Future supported settings can be added to each entry and the
+loader; adding a JSON field alone does not implement new behavior.
+Invocation defaults preserve agy's `--new-project` (use the current working
+directory), vibe's `--trust` (avoid an interactive trust prompt), and the
+existing MCP startup suppression flags.
+
+This is packaged application data, not a per-user override file. Package
+upgrades replace it; neither repository-local files nor
+`~/.aicp/config.json` can override agent execution settings. Ordinary user
+preferences continue to use the config file below.
 
 The config file lives at `~/.aicp/config.json` (override the path itself
 with `AICP_CONFIG`, which — being the thing that names the file — can only be
