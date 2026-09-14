@@ -32,16 +32,18 @@ The Python package itself has no runtime dependencies.
 ## Install
 
 ```sh
-uv tool install aicp             # latest release
-uv tool install aicp==X.Y.Z      # pin to a specific version
+uv tool install aicp-cli             # latest release
+uv tool install aicp-cli==X.Y.Z      # pin to a specific version
 ```
 
-Replace `X.Y.Z` with the release version you want to install. Re-running
-either command switches an existing install to that version.
+The distribution is `aicp-cli`; the command it installs is `aicp`. (The plain
+`aicp` name on PyPI belongs to an unrelated 2021 project — don't install it.)
+Replace `X.Y.Z` with the release version you want; re-running either command
+switches an existing install to that version.
 
 ```sh
-uv tool upgrade aicp
-uv tool uninstall aicp
+uv tool upgrade aicp-cli
+uv tool uninstall aicp-cli
 ```
 
 ## Set up skills

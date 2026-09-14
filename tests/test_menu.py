@@ -172,6 +172,9 @@ def test_the_cursor_row_is_bold_and_no_other_row_is():
     state = MenuState(Path("menu.aicprc"), True, True, "en", list(ROSTER_NAMES))
 
     frame = _panel(state, selected=2)
+    # Anchored on the border: an unanchored search also matches the version in
+    # the panel title (e.g. "(v0.2.1) "), making this test pass or fail on the
+    # digits of whatever version happens to be installed.
     setting_rows = [line for line in frame if re.match(r"│\s*[›\s]?\s*[1-6]\) ", _plain(line))]
     assert len(setting_rows) == len(ROWS), "every numbered row must be found, no more"
 
