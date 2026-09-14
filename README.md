@@ -32,7 +32,16 @@ The Python package itself has no runtime dependencies.
 ## Install
 
 ```sh
-uv tool install aicp
+uv tool install aicp             # latest release
+uv tool install aicp==X.Y.Z      # pin to a specific version
+```
+
+Replace `X.Y.Z` with the release version you want to install. Re-running
+either command switches an existing install to that version.
+
+```sh
+uv tool upgrade aicp
+uv tool uninstall aicp
 ```
 
 ## Set up skills
