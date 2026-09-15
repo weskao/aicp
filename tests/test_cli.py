@@ -323,6 +323,7 @@ def test_result_presents_the_winning_handler_for_each_attempt(
     out = capsys.readouterr().out
     assert "Commit handler" in out and "writer" in out
     assert "Push handler" in out and "pusher" in out
+    assert out.count("Commit handler") == 1
 
 
 # ── the git-verified RESULT table ────────────────────────────────────────────

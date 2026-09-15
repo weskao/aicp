@@ -342,7 +342,7 @@ def _commit_step(
         print()
         _echo(
             present.render(
-                [(t("commit_handler", "Commit handler"), result.winner or "—"), *rows],
+                rows,
                 f'{t("commits_panel_title", "NEW COMMITS")} · {gitflow.tz_label()}',
                 mode="panel",
                 accent=GREEN,
