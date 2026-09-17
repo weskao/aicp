@@ -1,3 +1,8 @@
+## [0.5.1] - 2026-09-17
+
+### 🐛 Bug Fixes
+
+- **cli:** Remove unused noqa directive
 ## [0.5.0] - 2026-09-17
 
 ### 🚀 Features
@@ -12,6 +17,7 @@
 ### 📚 Documentation
 
 - Clarify skill installation ownership
+- **changelog:** Release v0.5.0
 
 ### ⚙️ Miscellaneous Tasks
 
