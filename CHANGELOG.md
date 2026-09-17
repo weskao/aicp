@@ -1,3 +1,17 @@
+## [0.7.0] - 2026-09-17
+
+### 🚀 Features
+
+- **agents:** Add cli and menu editing surface
+
+### 🐛 Bug Fixes
+
+- **menu:** Size panels to their own content
+## [0.6.0] - 2026-09-17
+
+### 📚 Documentation
+
+- **changelog:** Release v0.6.0
 ## [0.5.1] - 2026-09-17
 
 ### 🐛 Bug Fixes
