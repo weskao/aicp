@@ -54,13 +54,12 @@ uv tool uninstall aicp-cli
 aicp --config   # -> Skills
 ```
 
-`/commit` and `/safe-git-push` only mean something if a skill by that exact
-name exists in the CLI's own config directory — otherwise the CLI receives a
-slash command it has never heard of and improvises. aicp ships byte-identical
-copies of both skills and installs them for you, but it never overwrites a
-skill you already have: a file with no aicp version marker next to it is
-treated as yours and left alone. If you already have a better `/commit` for
-this repo, it stays.
+`/safe-git-push` only means something if a skill by that exact name exists in
+the CLI's own config directory — otherwise the CLI receives a slash command it
+has never heard of and improvises. aicp ships and installs that skill for you,
+but it never overwrites a skill you already have: a file with no aicp version
+marker next to it is treated as yours and left alone. `/commit` is always left
+to your existing definition.
 
 Targets follow each CLI's own config directory, not its binary name — `agy`
 (this project's name for the Gemini CLI) reads `~/.gemini`, not `~/.agy`:
@@ -68,16 +67,16 @@ Targets follow each CLI's own config directory, not its binary name — `agy`
 | CLI | Config dir | `/commit` installed? | `/safe-git-push` installed? |
 | --- | --- | --- | --- |
 | `claude` | `~/.claude` | No — keeps your existing `commands/commit.md` | Yes |
-| `codex` | `~/.codex` | Yes | Yes |
-| `copilot` | `~/.copilot` | Yes | Yes |
-| `agy` (Gemini CLI) | `~/.gemini` | Yes | Yes |
-| `vibe` | `~/.vibe` | Yes | Yes |
-| `grok` | `$GROK_HOME` when set, otherwise `~/.grok` | Yes | Yes |
+| `codex` | `~/.codex` | No — keeps your existing `/commit` | Yes |
+| `copilot` | `~/.copilot` | No — keeps your existing `/commit` | Yes |
+| `agy` (Gemini CLI) | `~/.gemini` | No — keeps your existing `/commit` | Yes |
+| `vibe` | `~/.vibe` | No — keeps your existing `/commit` | Yes |
+| `grok` | `$GROK_HOME` when set, otherwise `~/.grok` | No — keeps your existing `/commit` | Yes |
 
-`claude` is the one exception: it already resolves `/commit` from its own
-`commands/commit.md`, so aicp never installs a competing definition under
-`skills/` there — installing one would just shadow the one Claude already
-uses. Every other CLI gets both skills.
+`/commit` is never installed: aicp keeps each CLI's existing command or skill
+definition. Claude resolves that definition from `commands/commit.md`; the
+other CLIs keep their existing `/commit` as well. Every configured CLI gets
+`/safe-git-push`.
 
 A CLI whose config directory doesn't exist at all is skipped, never created —
 aicp only ever installs into a CLI you've actually set up.
@@ -211,7 +210,7 @@ integration tests and installed-wheel checks on all three operating systems.
 | `config_dir` | Absolute path or `~/`-relative directory; home is resolved when used. |
 | `config_dir_env` | Optional environment variable overriding that directory (currently `GROK_HOME`). |
 | `skills_dir` | Relative directory inside `config_dir` where skills are installed. |
-| `skills` | Vendored skills to install: `commit` and/or `safe-git-push`. Claude keeps its existing `/commit`. |
+| `skills` | Vendored skills to install: `/safe-git-push`. Every CLI keeps its existing `/commit`. |
 | `memory_file` | Instruction filename used when adapting vendored skill text. Project directory references use the basename of `config_dir`. |
 | `args` | Argument array containing exactly one standalone `{prompt}`, replaced with the complete prompt as one argument. No shell evaluation. |
 
