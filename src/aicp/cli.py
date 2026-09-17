@@ -197,7 +197,7 @@ def _normalize_argv(argv: Sequence[str], parser: argparse.ArgumentParser) -> lis
     """
     long_flags = {
         opt[2:]
-        for action in parser._actions  # noqa: SLF001 - no public enumerator exists
+        for action in parser._actions
         for opt in action.option_strings
         if opt.startswith("--")
     }
