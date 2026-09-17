@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 import aicp
-from aicp.agents import load_agents
+from aicp.agents import _load_user_overrides, load_agents, merge_user_agents
 
 
 @pytest.mark.parametrize("location", ["home", "absolute", "environment"])
@@ -97,6 +97,106 @@ def test_rejects_invalid_registry_fields(tmp_path, field, value):
     path.write_text(json.dumps(data))
     with pytest.raises(ValueError, match=field):
         load_agents(path)
+
+
+def _write(path: Path, agents: dict) -> Path:
+    path.write_text(json.dumps({"version": 1, "agents": agents}))
+    return path
+
+
+def test_merge_user_agents_adds_a_new_agent(tmp_path):
+    base = load_agents(Path(aicp.__file__).with_name("agents.json"))
+    override = _write(
+        tmp_path / "agents.json",
+        {
+            "minimax": {
+                "executable": "minimax",
+                "config_dir": "~/.minimax",
+                "memory_file": "AGENTS.md",
+                "skills_dir": "skills",
+                "skills": ["safe-git-push"],
+                "args": ["--prompt", "{prompt}", "--yes"],
+            }
+        },
+    )
+    merged = merge_user_agents(base, override)
+    assert set(merged) == set(base) | {"minimax"}
+    assert merged["minimax"].executable == "minimax"
+
+
+def test_merge_user_agents_overrides_only_listed_fields(tmp_path):
+    base = load_agents(Path(aicp.__file__).with_name("agents.json"))
+    override = _write(tmp_path / "agents.json", {"claude": {"executable": "/opt/claude"}})
+    merged = merge_user_agents(base, override)
+    assert merged["claude"].executable == "/opt/claude"
+    assert merged["claude"].config_dir == base["claude"].config_dir
+    assert merged["claude"].args == base["claude"].args
+
+
+def test_merge_user_agents_disabled_drops_the_agent(tmp_path):
+    base = load_agents(Path(aicp.__file__).with_name("agents.json"))
+    override = _write(tmp_path / "agents.json", {"grok": {"disabled": True}})
+    merged = merge_user_agents(base, override)
+    assert "grok" not in merged
+    assert set(merged) == set(base) - {"grok"}
+
+
+def test_merge_user_agents_new_agent_requires_every_field(tmp_path):
+    base = load_agents(Path(aicp.__file__).with_name("agents.json"))
+    override = _write(tmp_path / "agents.json", {"minimax": {"executable": "minimax"}})
+    with pytest.raises(ValueError, match="config_dir"):
+        merge_user_agents(base, override)
+
+
+def test_load_user_overrides_warns_and_falls_back_on_malformed_file(tmp_path, capsys):
+    base = load_agents(Path(aicp.__file__).with_name("agents.json"))
+    (tmp_path / ".aicp").mkdir()
+    (tmp_path / ".aicp" / "agents.json").write_text("not json")
+    result = _load_user_overrides(base, home=tmp_path)
+    assert result == base
+    assert "ignoring" in capsys.readouterr().err
+
+
+def test_load_user_overrides_is_a_noop_with_no_file(tmp_path):
+    base = load_agents(Path(aicp.__file__).with_name("agents.json"))
+    assert _load_user_overrides(base, home=tmp_path) == base
+
+
+def test_user_agents_json_reaches_roster_and_cli_order(tmp_path):
+    home = tmp_path / "home"
+    (home / ".aicp").mkdir(parents=True)
+    _write(
+        home / ".aicp" / "agents.json",
+        {
+            "grok": {"disabled": True},
+            "minimax": {
+                "executable": "minimax",
+                "config_dir": "~/.minimax",
+                "memory_file": "AGENTS.md",
+                "skills_dir": "skills",
+                "skills": ["safe-git-push"],
+                "args": ["--prompt", "{prompt}", "--yes"],
+            },
+        },
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", """
+from aicp.contracts import ROSTER
+from aicp.config import resolve_cli_chain
+names = [c.name for c in ROSTER]
+assert 'grok' not in names, names
+assert 'minimax' in names, names
+assert resolve_cli_chain('minimax claude')[0] == 'minimax'
+print('ok')
+"""],
+        env={**os.environ, "HOME": str(home), "PYTHONUTF8": "1"},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ok" in result.stdout
 
 
 def test_config_root_preserves_absolute_paths_and_live_env(tmp_path, monkeypatch):
