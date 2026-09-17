@@ -25,12 +25,14 @@ a ``group`` heading (``None`` to share the previous row's), ``label``/``help``
 as ``(msgid, english)`` pairs, a ``value`` renderer and a ``cycle`` mutator
 that returns the string to persist. Nothing in this module hardcodes a count.
 
-The Skills and Doctor rows were added exactly that way, and are the reason
-a row may carry an ``action`` instead of a ``cycle``: they *do* something
-(install skills, print a health report) rather than persist a setting, and
-they show live status in their value column. They are rows and not
-subcommands on purpose — ``aicp`` and ``aicp --config`` are the only two
-things this tool ever asks anyone to remember.
+The Skills, Agents and Doctor rows were added exactly that way, and are the
+reason a row may carry an ``action`` instead of a ``cycle``: they *do*
+something (install skills, turn an agent on or off, print a health report)
+rather than persist a setting, and they show live status in their value
+column. They are rows and not subcommands on purpose — ``aicp`` and ``aicp
+--config`` are the only two things this tool ever asks anyone to remember.
+Agents is the one that also has a scriptable twin, ``aicp --agents``, because
+adding an agent means supplying six fields, which is a form and not a row.
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from . import __version__, gitflow, i18n, skills
+from . import __version__, agentcfg, agents, gitflow, i18n, skills
 from ._keyreader import is_interactive, key_session, pending, read_key, read_line
 from ._utils import BLUE, BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW, color_supported
 
@@ -108,6 +110,7 @@ class MenuState:
     #: instead, and dropped by the Skills action whenever it changes anything.
     skills_status: list[skills.SkillStatus] | None = None
     health: list[tuple[str, str]] | None = None
+    agent_rows: list[agents.AgentRow] | None = None
 
     @classmethod
     def from_settings(cls, settings: Settings) -> MenuState:
@@ -325,6 +328,205 @@ def _skills_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
     if not stale and not foreign:
         print(f"{DIM}" + _t(state.lang, "skills_nothing", "Nothing to do.") + f"{RESET}", file=out)
     print(file=out)
+
+
+def _agent_rows(state: MenuState) -> list[agents.AgentRow]:
+    if state.agent_rows is None:
+        state.agent_rows = agents.inventory()
+    return state.agent_rows
+
+
+def _agents_value(state: MenuState) -> str:
+    off = sum(1 for row in _agent_rows(state) if row.state == agents.DISABLED)
+    live = len(_agent_rows(state)) - off
+    if off:
+        return _t(state.lang, "agents_count_off", f"{_OK} %s active · %s off", live, off)
+    return _t(state.lang, "agents_count", f"{_OK} %s active", live)
+
+
+def _agents_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
+    """The registry, then one question: which agent to turn on or off.
+
+    Adding an agent needs six fields, which is a form, not a menu row — the
+    footer points at ``aicp --agents set`` for that. Toggling is the part
+    worth an arrow key, and the part that has to stay in step with the saved
+    CLI order, which :func:`aicp.agentcfg.apply` keeps for us.
+    """
+    rows = _agent_rows(state)
+    print(file=out)
+    print(_t(state.lang, "config_agents", "Agents"), file=out)  # the row's own label
+    for i, row in enumerate(rows, start=1):
+        mark, color = (
+            (_SKIP, DIM) if row.state == agents.DISABLED else (_OK, GREEN)
+        )
+        label = _t(state.lang, *agentcfg.STATE_LABELS[row.state])
+        print(
+            f"  {i}) {color}{mark}{RESET} {row.name:<10} {row.executable:<22} {DIM}{label}{RESET}",
+            file=out,
+        )
+    print(file=out)
+    print(
+        _t(state.lang, "agents_toggle_q", "Turn which one on/off? [1-%s, ⏎ to skip]: ", len(rows)),
+        file=out,
+    )
+    choice = read_line(stdin)
+    if choice is None or choice == "":
+        print(
+            f"{DIM}"
+            + _t(
+                state.lang,
+                "agents_edit_hint",
+                "  add or edit one with: aicp --agents set <name> executable=… config_dir=…",
+            )
+            + f"{RESET}",
+            file=out,
+        )
+        print(file=out)
+        return
+    if not choice.isdigit() or not 1 <= int(choice) <= len(rows):
+        print(f"{RED}{_t(state.lang, 'swap_invalid', '✗ invalid choice: %s', choice)}{RESET}", file=out)
+        print(file=out)
+        return
+
+    picked = rows[int(choice) - 1]
+    verb = "enable" if picked.state == agents.DISABLED else "disable"
+    try:
+        change = agentcfg.apply(verb, picked.name, config_path=state.path)
+    except agentcfg.AgentEditError as exc:
+        print(f"{RED}✗ {exc}{RESET}", file=out)
+        print(file=out)
+        return
+
+    print(
+        f"  {GREEN}"
+        + (
+            _t(state.lang, "agents_done_enabled", "✓ %s enabled", change.name)
+            if change.verb == "enabled"
+            else _t(state.lang, "agents_done_disabled", "✓ %s disabled", change.name)
+        )
+        + RESET,
+        file=out,
+    )
+    if change.pruned:
+        print(
+            f"{DIM}"
+            + _t(
+                state.lang,
+                "agents_pruned",
+                "  dropped from the saved CLI order: %s",
+                " ".join(change.pruned),
+            )
+            + f"{RESET}",
+            file=out,
+        )
+    # The roster this session was built from just changed, so every cached
+    # view of it is stale — including the chain, which the AI CLI order row
+    # would otherwise persist with the name that was just removed still in it.
+    state.chain = [name for name in state.chain if name in change.names] + [
+        name for name in change.names if name not in state.chain
+    ]
+    state.agent_rows = None
+    state.skills_status = None
+    state.health = None
+    print(
+        f"{DIM}" + _t(state.lang, "agents_next_run", "  the next aicp run uses it") + f"{RESET}",
+        file=out,
+    )
+    print(file=out)
+
+
+def _agents_lines(
+    state: MenuState, selected: int, out: IO[str], message: str | None = None
+) -> list[str]:
+    """The Agents sub-panel: one row per registry entry, cursor-navigable
+    exactly like the top-level panel — this is a second small ``_panel``, not
+    a report, because a toggle here is meant to be watched happening rather
+    than read off a printed list afterwards.
+
+    ``min_inner=frame_columns`` pins this panel's outer frame to exactly the
+    same width :func:`_panel` draws — opening and leaving the Agents row must
+    not resize the box. The executable column is padded to its own widest
+    entry so the state label starts in the same place on every row, the same
+    fixed-width-column trick :func:`render_table` gets for free and a two-
+    column ``(label, value)`` panel does not.
+    """
+    frame_columns, _ = _fit_columns(state, out)
+    rows = _agent_rows(state)
+    exec_w = max((width(row.executable) for row in rows), default=0)
+    body: list[tuple[str, str]] = []
+    for i, row in enumerate(rows, start=1):
+        marker = "›" if selected == i else " "
+        mark, color = (_SKIP, DIM) if row.state == agents.DISABLED else (_OK, GREEN)
+        label = f"{marker} {i}) {row.name}"
+        if selected == i:
+            label = f"{RESET}{BOLD}{label}{RESET}"
+        state_label = _t(state.lang, *agentcfg.STATE_LABELS[row.state])
+        pad = " " * (exec_w - width(row.executable))
+        value = f"{color}{mark}{RESET} {row.executable}{pad}  {DIM}{state_label}{RESET}"
+        body.append((label, value))
+    notes = [message] if message else []
+    notes.append(
+        f"{DIM}" + _t(state.lang, "agents_tui_keys", "↑↓ select · ⏎ toggle on/off · q back") + f"{RESET}"
+    )
+    return render_panel(
+        body, _t(state.lang, "config_agents", "Agents"), CYAN, notes=notes, min_inner=frame_columns
+    )
+
+
+def _agents_tui(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
+    """Arrow-key loop opened by the Agents row: ↑↓ moves, ⏎/←/→ toggles the
+    highlighted agent on/off through :func:`agentcfg.apply` — saved
+    immediately, same as every other row — and q leaves. Returns the last
+    frame it drew, so the caller can erase exactly that many rows before
+    repainting the row it came from, instead of leaving this panel behind
+    like the Skills/Doctor reports do.
+    """
+    selected = 1
+    message: str | None = None
+    lines = _agents_lines(state, selected, out)
+    for line in lines:
+        print(line, file=out)
+    while True:
+        key = read_key(stdin, out)
+        if key == "quit":
+            return lines
+        message = None
+        rows = _agent_rows(state)
+        if key == "up":
+            selected = selected - 1 if selected > 1 else len(rows)
+        elif key == "down":
+            selected = selected + 1 if selected < len(rows) else 1
+        elif key in ("left", "right", "enter"):
+            picked = rows[selected - 1]
+            verb = "enable" if picked.state == agents.DISABLED else "disable"
+            try:
+                change = agentcfg.apply(verb, picked.name, config_path=state.path)
+            except agentcfg.AgentEditError as exc:
+                message = f"{RED}✗ {exc}{RESET}"
+            else:
+                state.chain = [name for name in state.chain if name in change.names] + [
+                    name for name in change.names if name not in state.chain
+                ]
+                state.agent_rows = None
+                state.skills_status = None
+                state.health = None
+                if change.pruned:
+                    message = (
+                        f"{DIM}"
+                        + _t(
+                            state.lang,
+                            "agents_pruned",
+                            "  dropped from the saved CLI order: %s",
+                            " ".join(change.pruned),
+                        )
+                        + f"{RESET}"
+                    )
+        else:
+            continue
+        out.write(f"\033[{_frame_rows(lines, out)}A\033[J")
+        lines = _agents_lines(state, selected, out, message)
+        for line in lines:
+            print(line, file=out)
 
 
 def _config_health(state: MenuState) -> list[tuple[str, str]]:
@@ -546,6 +748,18 @@ ROWS: tuple[Row, ...] = (
     Row(
         key="",
         group=None,
+        label=("config_agents", "Agents"),
+        help=(
+            "config_help_agents",
+            "Which AI CLIs aicp knows about. Turn one off, or add your own with --agents set.",
+        ),
+        value=_agents_value,
+        accent=lambda _s: CYAN,
+        action=_agents_action,
+    ),
+    Row(
+        key="",
+        group=None,
         label=("config_doctor", "Health check"),
         help=(
             "config_help_doctor",
@@ -676,7 +890,7 @@ def _panel(
     # are the line someone stuck in an unfamiliar menu actually needs.
     while notes and len(rows) + len(notes) + 4 > _terminal_size(out).lines:
         notes.pop(0)
-    return render_panel(rows, title, BLUE, notes=notes)
+    return render_panel(rows, title, BLUE, notes=notes, min_inner=frame_columns)
 
 
 def _write(
@@ -905,6 +1119,17 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
                 elif key in ("left", "right", "enter"):
                     row = ROWS[selected - 1]
                     before = list(state.chain)
+                    if row.action is _agents_action:
+                        # The one action row with its own arrow-key loop: a
+                        # toggle is watched happening, not read off a report,
+                        # so its frame is erased like any other value change
+                        # rather than left standing like Skills/Doctor's.
+                        agent_lines = _agents_tui(state, stdin, out)
+                        out.write(f"\033[{_frame_rows(agent_lines, out)}A\033[J")
+                        lines = _panel(state, selected, out)
+                        for line in lines:
+                            print(line, file=out)
+                        continue
                     if not _write(state, row, -1 if key == "left" else 1, stdin, out, typed):
                         return 1
                     if row.action is not None:

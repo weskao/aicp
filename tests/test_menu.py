@@ -185,7 +185,7 @@ def test_the_cursor_row_is_bold_and_no_other_row_is():
     # Anchored on the border: an unanchored search also matches the version in
     # the panel title (e.g. "(v0.2.1) "), making this test pass or fail on the
     # digits of whatever version happens to be installed.
-    setting_rows = [line for line in frame if re.match(r"│\s*[›\s]?\s*[1-6]\) ", _plain(line))]
+    setting_rows = [line for line in frame if re.match(r"│\s*[›\s]?\s*\d+\) ", _plain(line))]
     assert len(setting_rows) == len(ROWS), "every numbered row must be found, no more"
 
     selected_row = next(line for line in setting_rows if "safe-git-push" in _plain(line))
@@ -406,14 +406,15 @@ def test_non_tty_fallback_is_taken_on_a_real_pipe_fd():
 
 
 def test_rows_are_data_addressed_by_index(menu):
-    # The last two are the appended action rows (Skills, Doctor): they run
-    # something instead of persisting a setting, hence no config key. See
-    # test_menu_skills.py.
+    # The last three are the appended action rows (Skills, Agents, Doctor):
+    # they run something instead of persisting a setting, hence no config key.
+    # See test_menu_skills.py.
     assert tuple(row.key for row in ROWS) == (
         "AICP_DO_COMMIT",
         "AICP_DO_PUSH",
         "AICP_LANG",
         "AICP_CLI_ORDER",
+        "",
         "",
         "",
     )

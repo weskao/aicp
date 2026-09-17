@@ -208,8 +208,12 @@ def _read_json_object(path: Path) -> dict:
     return {key.upper(): value for key, value in data.items()}
 
 
-def _write_json_private(path: Path, data: Mapping[str, str]) -> bool:
+def _write_json_private(path: Path, data: Mapping[str, object]) -> bool:
     """Atomically overwrite *path* with *data* as owner-only (0600) JSON.
+
+    Also the writer :mod:`aicp.agentcfg` uses for ``~/.aicp/agents.json``:
+    same directory, same owner-only posture, and the same guarantee that a
+    crash mid-write cannot truncate what was already there.
 
     Keys are lower-cased on the way out — ``AICP_DO_COMMIT`` (the form every
     caller passes in, matching the environment) is written as

@@ -205,6 +205,7 @@ def render_panel(
     accent: str,
     zebra: bool = False,
     notes: Sequence[str] = (),
+    min_inner: int = 0,
 ) -> list[str]:
     """Render *rows* (label, value pairs) as a titled rounded-frame panel.
 
@@ -223,12 +224,18 @@ def render_panel(
     stays chrome. Bold on the terminal's default foreground — the same
     treatment as *title* — rather than a hardcoded white, so the heading
     survives a light-background theme.
+
+    ``min_inner`` is a floor on the frame's inner width, unrelated to
+    content: a caller opening a second, related panel (the config menu's
+    Agents sub-panel) passes the primary panel's own width here so the two
+    never disagree — switching between them must not resize the border.
     """
     label_w = max(width(k) for k, v in rows if v)
     value_w = max((width(v) for _, v in rows if v), default=0)
     inner = max(
         label_w + value_w + 6,
         width(title) + 3,
+        min_inner,
         *(width(n) + 4 for n in notes),
         *(width(k) + 4 for k, v in rows if not v),
     )

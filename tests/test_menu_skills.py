@@ -1,9 +1,12 @@
-"""The Skills and Doctor rows of ``--config``.
+"""The Skills, Agents and Doctor rows of ``--config``.
 
-Two rows, not two subcommands: the whole point is that only ``aicp`` and
-``aicp --config`` are ever memorised. So these are driven exactly like every
-other row in ``test_menu.py`` — through the NUMBERED fallback, which is also
-the CI surface, hence the "never blocks on a pipe" tests at the bottom.
+Rows, not subcommands: the whole point is that only ``aicp`` and ``aicp
+--config`` are ever memorised. So these are driven exactly like every other
+row in ``test_menu.py`` — through the NUMBERED fallback, which is also the CI
+surface, hence the "never blocks on a pipe" tests at the bottom. The Agents
+row's scriptable twin, ``aicp --agents``, is covered in ``test_agentcfg.py``;
+what is tested here is the part unique to the menu — that a toggle refreshes
+the row's cached status and keeps the saved CLI order loadable.
 
 Every test runs against conftest's fake ``$HOME`` (``pinned_environment``),
 so a config dir only exists here if the test made it: the roster's other
@@ -22,8 +25,20 @@ import pytest
 from aicp import skills
 from aicp.menu import ROWS, config_menu
 
-SKILLS_ROW = 5
-DOCTOR_ROW = 6
+
+def _row_number(msgid: str) -> int:
+    """Where a row sits in the menu, by its label id rather than a literal.
+
+    ROWS is data and the menu derives its numbering from the tuple's length;
+    pinning a digit here just means every added row breaks a dozen tests that
+    are not about ordering at all.
+    """
+    return next(i for i, row in enumerate(ROWS, start=1) if row.label[0] == msgid)
+
+
+SKILLS_ROW = _row_number("config_skills")
+AGENTS_ROW = _row_number("config_agents")
+DOCTOR_ROW = _row_number("config_doctor")
 
 FOREIGN_TEXT = "# my own commit skill\n"
 
@@ -72,7 +87,6 @@ def codex_foreign(codex) -> Path:
 
 
 def test_both_rows_are_appended_to_the_row_model(menu):
-    assert len(ROWS) == 6
     _, out, _ = menu("q\n")
     assert f"{SKILLS_ROW}) Skills" in out
     assert f"{DOCTOR_ROW}) Health check" in out
@@ -92,7 +106,7 @@ def test_the_doctor_row_carries_its_status_inline(menu, monkeypatch):
 
 
 def test_the_prompt_and_bounds_grew_with_the_new_rows(menu):
-    code, out, cfg = menu("7\nq\n")
+    code, out, cfg = menu(f"{len(ROWS) + 1}\nq\n")
     assert code == 0
     assert f"1-{len(ROWS)}" in out
     assert "Enter one of the setting numbers" in out
@@ -183,10 +197,77 @@ def test_warnings_do_not_read_as_errors(menu, monkeypatch):
     assert "✗" not in out, "a warning is not a failure"
 
 
+# ── Agents: the row that turns an AI CLI off and on ──────────────────────────
+
+
+def _agent_number(name: str) -> int:
+    """Where *name* sits in the Agents row's own list — derived, so a change
+    to the built-in roster moves this rather than breaking it."""
+    from aicp import agents
+
+    return next(i for i, row in enumerate(agents.inventory(), start=1) if row.name == name)
+
+
+def test_the_agents_row_toggles_an_agent_and_refreshes_its_own_status(menu, home):
+    grok = _agent_number("grok")
+    code, out, _ = menu(f"{AGENTS_ROW}\n{grok}\n{AGENTS_ROW}\n{grok}\nq\n")
+    assert code == 0
+    assert "grok disabled" in out and "grok enabled" in out
+    # The row's value column is probed once and cached; a toggle has to drop
+    # that cache or the menu keeps reporting the roster it started with.
+    assert "5 active · 1 off" in out, out
+    assert not (home / ".aicp" / "agents.json").exists(), "enable undid the write"
+
+
+def test_the_agents_row_prunes_the_saved_cli_order_it_just_invalidated(menu, home):
+    """The chain row and the registry are edited in the same session, so the
+    order must not be left naming an agent that no longer resolves."""
+    _, _, cfg = menu(
+        f"{AGENTS_ROW}\n{_agent_number('grok')}\nq\n",
+        initial=json.dumps({"aicp_cli_order": "grok claude copilot agy codex vibe"}),
+    )
+    assert json.loads(cfg.read_text(encoding="utf-8"))["aicp_cli_order"].split() == [
+        "claude",
+        "copilot",
+        "agy",
+        "codex",
+        "vibe",
+    ]
+
+
+def test_an_out_of_range_agent_number_changes_nothing(menu, home):
+    _, out, _ = menu(f"{AGENTS_ROW}\n99\nq\n")
+    assert "invalid choice" in out
+    assert not (home / ".aicp" / "agents.json").exists()
+
+
+def test_the_arrow_key_tui_opens_an_agents_loop_that_toggles_in_place(home):
+    """The TUI surface gets its own ↑↓/⏎ loop instead of the numbered
+    fallback's typed-choice prompt — driven here through ``_tui`` directly
+    (as ``_panel``/``_order_motion`` are elsewhere in this suite), since
+    ``read_key``'s non-TTY fallback already maps plain lines onto the same
+    semantic keys a real terminal would send.
+    """
+    from aicp import agents
+    from aicp.menu import MenuState, _tui
+
+    state = MenuState(
+        home / ".aicp" / "menu.aicprc", True, True, "en", [row.name for row in agents.inventory(home)]
+    )
+    down_to_agents = "down\n" * (AGENTS_ROW - 1)
+    # Inside the Agents loop: move to the 2nd row, toggle it off, leave the
+    # loop, then quit the outer menu.
+    code = _tui(state, io.StringIO(f"{down_to_agents}enter\ndown\nenter\nquit\nquit\n"), io.StringIO())
+
+    assert code == 0
+    second = agents.inventory(home)[1]
+    assert second.state == agents.DISABLED
+
+
 # ── CI safety: neither row blocks on a pipe ──────────────────────────────────
 
 
-@pytest.mark.parametrize("row", [SKILLS_ROW, DOCTOR_ROW])
+@pytest.mark.parametrize("row", [SKILLS_ROW, AGENTS_ROW, DOCTOR_ROW])
 def test_neither_row_blocks_on_non_tty_stdin(menu, codex_foreign, row):
     """EOF mid-prompt is "no", not "wait forever" — this tool runs in CI."""
     code, _, cfg = menu(f"{row}\n")

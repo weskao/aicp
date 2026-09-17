@@ -36,7 +36,19 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import NoReturn
 
-from . import __version__, config, gitflow, i18n, menu, notify, present, runner, skills
+from . import (
+    __version__,
+    agentcfg,
+    agents,
+    config,
+    gitflow,
+    i18n,
+    menu,
+    notify,
+    present,
+    runner,
+    skills,
+)
 from ._utils import BLUE, BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW, have
 from .agents import executable
 from .contracts import ROSTER
@@ -201,7 +213,19 @@ def _normalize_argv(argv: Sequence[str], parser: argparse.ArgumentParser) -> lis
         for opt in action.option_strings
         if opt.startswith("--")
     }
-    return [f"--{arg}" if arg in long_flags else arg for arg in argv]
+    normalized: list[str] = []
+    for i, arg in enumerate(argv):
+        if arg in long_flags:
+            normalized.append(f"--{arg}")
+        elif arg.startswith("-"):
+            normalized.append(arg)
+        else:
+            # The first bare word that names no flag begins the operands
+            # (`aicp agents disable <name>`), and an agent that happens to be
+            # called "json" must not be rewritten into --json.
+            normalized.extend(argv[i:])
+            break
+    return normalized
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -245,6 +269,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--doctor", action="store_true",
         help=t("help_doctor", "report where each vendored skill stands for each CLI"),
     )
+    parser.add_argument(
+        "--agents", nargs="*", metavar="ARG",
+        help=t(
+            "help_agents",
+            "list the agent registry; or enable/disable/set/reset one in ~/.aicp/agents.json",
+        ),
+    )
     parser.add_argument("--json", action="store_true", help=t("help_json", "--doctor as JSON"))
     parser.add_argument(
         "--install-skills", action="store_true",
@@ -270,6 +301,61 @@ def _doctor(*, as_json: bool) -> int:
         return 0
     rows = [(f"{s.cli} · {s.skill}", s.version or s.state) for s in skills.full_status()]
     _echo(present.render(rows, t("skills_title", "SKILLS")))
+    return 0
+
+
+def _agents_list() -> int:
+    rows = [
+        (row.name, f"{row.executable}  {DIM}·  {t(*agentcfg.STATE_LABELS[row.state])}{RESET}")
+        for row in agents.inventory()
+    ]
+    _echo(present.render(rows, t("agents_title", "AGENTS")))
+    _dim(t("agents_hint", "  aicp --agents set <name> executable=… · disable <name> · reset <name>"))
+    return 0
+
+
+def _agents(argv: Sequence[str]) -> int:
+    """``--agents`` and its verbs. Writes nothing on any error path."""
+    verb, rest = (argv[0] if argv else "list"), list(argv[1:])
+    if verb == "list":
+        return _agents_list()
+    if verb not in agentcfg.VERBS:
+        print(
+            f"{RED}"
+            + t("agents_bad_verb", "✗ unknown agents verb: %s (use: %s)", verb, " ".join(agentcfg.VERBS))
+            + RESET,
+            file=sys.stderr,
+        )
+        return 1
+    if not rest:
+        print(
+            f"{RED}" + t("agents_needs_name", "✗ %s needs an agent name", verb) + RESET,
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        change = agentcfg.apply(verb, rest[0], rest[1:])
+    except agentcfg.AgentEditError as exc:
+        print(f"{RED}✗ {exc}{RESET}", file=sys.stderr)
+        return 1
+    done = {
+        "enabled": ("agents_done_enabled", "✓ %s enabled"),
+        "disabled": ("agents_done_disabled", "✓ %s disabled"),
+        "updated": ("agents_done_updated", "✓ %s updated"),
+        "added": ("agents_done_added", "✓ %s added"),
+        "reset": ("agents_done_reset", "✓ %s reset to its built-in definition"),
+        "removed": ("agents_done_removed", "✓ %s removed"),
+    }[change.verb]
+    print(f"{GREEN}{t(*done, change.name)}{RESET}")
+    if change.pruned:
+        _dim(
+            t(
+                "agents_pruned",
+                "  dropped from the saved CLI order: %s",
+                " ".join(change.pruned),
+            )
+        )
+    _dim(t("agents_next_run", "  the next aicp run uses it"))
     return 0
 
 
@@ -576,6 +662,8 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if args.doctor:
         return _doctor(as_json=args.json)
+    if args.agents is not None:
+        return _agents(args.agents)
     if args.install_skills:
         return _install_skills(yes=args.yes, force=args.force)
     if args.config:

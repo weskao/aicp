@@ -156,6 +156,7 @@ use is the two commands above.
 aicp --doctor --json          # skill-install status for every configured CLI, as JSON
 aicp --install-skills --yes   # install what's missing, upgrade what's outdated
 aicp --install-skills --force # also replace files aicp doesn't recognize
+aicp --agents                 # the agent registry; see Custom agents for its verbs
 ```
 
 `--doctor --json` reports, per CLI and per skill: the target path and whether
@@ -230,12 +231,46 @@ preferences continue to use the config file below.
 
 You can add agents that are not in the built-in registry — or suppress
 built-in ones — without touching the bundled `agents.json` (which package
-upgrades replace). Create `~/.aicp/agents.json` with the same `version: 1`
-/ `agents` envelope. aicp merges it over the built-in registry at startup:
-user-defined entries win on conflict, and an entry with `"disabled": true`
-removes that agent from the chain entirely.
+upgrades replace). Your changes live in `~/.aicp/agents.json`, which aicp
+merges over the built-in registry at startup: your entries win on conflict,
+and an entry with `"disabled": true` removes that agent from the chain.
 
-**Adding a new agent** — example: [MiniMax](https://www.minimaxi.com/) CLI:
+You don't have to write that file by hand. `aicp --agents` edits it for you,
+and so does the **Agents** row of `aicp --config`:
+
+```sh
+aicp --agents                                   # list every agent and where it came from
+aicp --agents disable grok                      # drop one from the chain
+aicp --agents enable grok                       # put it back
+aicp --agents set claude executable=/opt/claude # override one field
+aicp --agents reset claude                      # forget your override
+```
+
+Like every other flag, the leading `--` is optional: `aicp agents disable grok`.
+
+Nothing is written unless the resulting registry passes the same validation
+the next run does, so a typo is refused with the file left exactly as it was —
+`aicp` can never be edited into a state where it won't start. Disabling an
+agent also removes it from a saved `aicp_cli_order`, because an order naming
+an agent that no longer resolves is rejected *in full*, which would silently
+reset a fallback order you picked on purpose. The last remaining agent can't
+be disabled.
+
+**Adding a new agent** — example: [MiniMax](https://www.minimaxi.com/) CLI.
+Every field is required for a name the built-in registry has never heard of:
+
+```sh
+aicp --agents set minimax \
+  executable=minimax \
+  config_dir='~/.minimax' \
+  memory_file=AGENTS.md \
+  skills_dir=skills \
+  skills=safe-git-push \
+  'args=--prompt,{prompt},--yes'
+```
+
+`skills` and `args` are comma-separated; a value that needs a literal comma
+has to go into the file by hand. The equivalent written out:
 
 ```json
 {
@@ -253,51 +288,27 @@ removes that agent from the chain entirely.
 }
 ```
 
-Then add `minimax` anywhere in your preferred fallback order:
+A new agent joins the end of the fallback chain automatically. To put it
+first, use `aicp --swap-ai`, the AI CLI order row of `aicp --config`, or set
+the order yourself:
 
 ```sh
 # ~/.aicp/config.json
 { "aicp_cli_order": "minimax copilot agy codex claude vibe grok" }
 ```
 
-Or set it as an environment variable for one run:
+Or as an environment variable, for one run:
 
 ```sh
 AICP_CLI_ORDER="minimax claude" aicp
 ```
 
-**Disabling a built-in agent** — example: remove `grok` from the chain:
-
-```json
-{
-  "version": 1,
-  "agents": {
-    "grok": { "disabled": true }
-  }
-}
-```
-
-**Overriding a built-in agent's settings** — example: change `claude`'s
-executable path:
-
-```json
-{
-  "version": 1,
-  "agents": {
-    "claude": {
-      "executable": "/opt/homebrew/bin/claude"
-    }
-  }
-}
-```
-
-Only the fields you provide are overridden; unspecified fields keep the
-built-in values. The same agent-field table above applies to user-defined
-entries. Running the chain only needs the `executable` on `PATH`, same as any
-built-in agent (see [Fallback results](#fallback-results-and-quota-limits));
-`config_dir` matters for skill installation — a newly added agent whose
-`config_dir` doesn't exist yet is skipped there until you set it up (as
-above).
+For an agent that already exists, only the fields you provide are overridden;
+unspecified fields keep the built-in values. Running the chain only needs the
+`executable` on `PATH`, same as any built-in agent (see
+[Fallback results](#fallback-results-and-quota-limits)); `config_dir` matters
+for skill installation — a newly added agent whose `config_dir` doesn't exist
+yet is skipped there until you set it up.
 
 The config file lives at `~/.aicp/config.json` (override the path itself
 with `AICP_CONFIG`, which — being the thing that names the file — can only be
