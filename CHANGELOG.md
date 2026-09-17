@@ -3,6 +3,10 @@
 ### 🐛 Bug Fixes
 
 - **cli:** Remove unused noqa directive
+
+### 📚 Documentation
+
+- **changelog:** Release v0.5.1
 ## [0.5.0] - 2026-09-17
 
 ### 🚀 Features
