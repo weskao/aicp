@@ -435,22 +435,18 @@ def _agents_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
     print(file=out)
 
 
-def _agents_lines(
-    state: MenuState, selected: int, out: IO[str], message: str | None = None
-) -> list[str]:
+def _agents_lines(state: MenuState, selected: int, message: str | None = None) -> list[str]:
     """The Agents sub-panel: one row per registry entry, cursor-navigable
     exactly like the top-level panel — this is a second small ``_panel``, not
     a report, because a toggle here is meant to be watched happening rather
-    than read off a printed list afterwards.
-
-    ``min_inner=frame_columns`` pins this panel's outer frame to exactly the
-    same width :func:`_panel` draws — opening and leaving the Agents row must
-    not resize the box. The executable column is padded to its own widest
-    entry so the state label starts in the same place on every row, the same
-    fixed-width-column trick :func:`render_table` gets for free and a two-
-    column ``(label, value)`` panel does not.
+    than read off a printed list afterwards. Sized to its own content (a
+    short roster, not the terminal width) and stable across keypresses: the
+    row text never changes length as the cursor moves, only which one is
+    bold. The executable column is padded to its own widest entry so the
+    state label starts in the same place on every row — the fixed-width-
+    column trick :func:`render_table` gets for free and a two-column
+    ``(label, value)`` panel does not.
     """
-    frame_columns, _ = _fit_columns(state, out)
     rows = _agent_rows(state)
     exec_w = max((width(row.executable) for row in rows), default=0)
     body: list[tuple[str, str]] = []
@@ -468,9 +464,7 @@ def _agents_lines(
     notes.append(
         f"{DIM}" + _t(state.lang, "agents_tui_keys", "↑↓ select · ⏎ toggle on/off · q back") + f"{RESET}"
     )
-    return render_panel(
-        body, _t(state.lang, "config_agents", "Agents"), CYAN, notes=notes, min_inner=frame_columns
-    )
+    return render_panel(body, _t(state.lang, "config_agents", "Agents"), CYAN, notes=notes)
 
 
 def _agents_tui(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
@@ -483,7 +477,7 @@ def _agents_tui(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
     """
     selected = 1
     message: str | None = None
-    lines = _agents_lines(state, selected, out)
+    lines = _agents_lines(state, selected)
     for line in lines:
         print(line, file=out)
     while True:
@@ -524,7 +518,7 @@ def _agents_tui(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
         else:
             continue
         out.write(f"\033[{_frame_rows(lines, out)}A\033[J")
-        lines = _agents_lines(state, selected, out, message)
+        lines = _agents_lines(state, selected, message)
         for line in lines:
             print(line, file=out)
 
@@ -890,7 +884,7 @@ def _panel(
     # are the line someone stuck in an unfamiliar menu actually needs.
     while notes and len(rows) + len(notes) + 4 > _terminal_size(out).lines:
         notes.pop(0)
-    return render_panel(rows, title, BLUE, notes=notes, min_inner=frame_columns)
+    return render_panel(rows, title, BLUE, notes=notes)
 
 
 def _write(
