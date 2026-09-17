@@ -1,8 +1,36 @@
+## [0.5.0] - 2026-09-17
+
+### 🚀 Features
+
+- **cli:** Allow flags without their leading --
+
+### 🐛 Bug Fixes
+
+- **cli:** Remove duplicate commit handler row
+- **secret-scan:** Ignore url path slugs
+
+### 📚 Documentation
+
+- Clarify skill installation ownership
+
+### ⚙️ Miscellaneous Tasks
+
+- **commit:** Remove model metadata
+- **release:** Add scripted release flow
+- **release:** Remove project release.sh, use global template
 ## [0.4.0] - 2026-09-14
+
+### 🐛 Bug Fixes
+
+- **release:** Sync uv.lock for v0.4.0
 
 ### 🚜 Refactor
 
 - **agents:** Centralize agent definitions
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.4.0
 ## [0.3.1] - 2026-09-14
 
 ### 🐛 Bug Fixes
