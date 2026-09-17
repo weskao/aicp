@@ -32,6 +32,7 @@ SAMPLES: tuple[tuple[str, str], ...] = (
     ("aws-asia", "ASIAABCDEFGHIJKLMNOP"),
     ("bearer", "Bearer abcdefghijklmnopqrstuvwxyz0123"),
     ("private-key", "-----BEGIN RSA PRIVATE KEY-----"),
+    ("openai-url-safe", "sk-abcde_fghij-klmno_pqrstuvwxyz0123"),
 )
 
 # The entropy heuristic was deliberately rejected upstream (see the comment
@@ -39,6 +40,7 @@ SAMPLES: tuple[tuple[str, str], ...] = (
 # source, and this repo's own strings would trip it.
 BENIGN: tuple[str, ...] = (
     "sk-automation",
+    "https://example.com/elon-musk-authorized-biography",
     "Bearer short",
     "AKIAZ demo",
     "ghp_short",
@@ -93,6 +95,13 @@ def test_benign_lookalikes_are_not_flagged(repo: Path, line: str) -> None:
     result = scan(repo)
     assert result.hits == ()
     assert result.ok
+
+
+def test_sensitive_value_in_a_url_query_is_flagged(repo: Path) -> None:
+    (repo / "notes.txt").write_text(
+        f"https://example.com/?api_key={SAMPLES[-1][1]}\n", encoding="utf-8"
+    )
+    assert scan(repo).hits
 
 
 # ── scan surface ─────────────────────────────────────────────────────────────

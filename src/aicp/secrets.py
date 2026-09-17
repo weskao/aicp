@@ -40,10 +40,12 @@ from .i18n import t
 
 __all__ = ["PATTERNS", "ScanResult", "report_lines", "scan"]
 
-# Prefix/format checks only, copied verbatim from AICP_SECRET_PATTERNS in
-# bin/aicp. The human name is the only half ever printed.
+# Prefix/format checks only. The human name is the only half ever printed.
 PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"sk-(proj-)?[A-Za-z0-9_-]{20,}"), "OpenAI-style API key (sk-…)"),
+    (
+        re.compile(r"sk-(proj-)?[A-Za-z0-9_-]{20,}"),
+        "OpenAI-style API key (sk-…)",
+    ),
     (re.compile(r"ghp_[A-Za-z0-9]{20,}"), "GitHub personal access token (ghp_…)"),
     (re.compile(r"ghs_[A-Za-z0-9]{20,}"), "GitHub App/server token (ghs_…)"),
     (re.compile(r"github_pat_[A-Za-z0-9_]{20,}"), "GitHub fine-grained PAT (github_pat_…)"),
@@ -51,6 +53,8 @@ PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"[Bb]earer [A-Za-z0-9._-]{20,}"), "bearer token (Bearer …)"),
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----"), "private key block"),
 )
+
+_URL_PATH = re.compile(r"https?://[^/\s?#]+(?P<path>/[^\s?#]*)")
 
 #: How much of a file is inspected for a NUL byte before calling it binary —
 #: the same "first block decides" rule `grep -I` applies.
@@ -77,8 +81,12 @@ def _hit(file: str, lineno: int, content: str) -> str | None:
     """The redaction boundary: *content* is matched and discarded, and only
     the location plus the pattern's name survive into the returned string."""
     for pattern, name in PATTERNS:
-        if pattern.search(content):
-            return f"{file}:{lineno}  looks like {name}"
+        for match in pattern.finditer(content):
+            if not any(
+                url.start("path") <= match.start() and match.end() <= url.end("path")
+                for url in _URL_PATH.finditer(content)
+            ):
+                return f"{file}:{lineno}  looks like {name}"
     return None
 
 

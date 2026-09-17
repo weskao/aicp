@@ -6,6 +6,12 @@ description: Stage and commit all changes, grouped into logical Conventional Com
 
 Git commit current changes, split into logical batches if needed.
 
+## Secret-scan behavior
+
+The pre-command aicp gate ignores key-like text only in URL paths, not in
+ordinary text or URL query values. This prevents hyphenated article slugs from
+blocking `/commit` without weakening sensitive-string detection.
+
 ## Project override (check FIRST)
 
 Skills/custom commands resolve **personal-over-project** on a name clash, so
