@@ -2,10 +2,18 @@
 
 AI commit + push, with a git-verified result summary.
 
-`aicp` runs an AI coding CLI to write your commit message(s) and push, trying
-a fallback chain of six CLIs — `copilot` → `agy` → `codex` → `claude` →
-`vibe` → `grok` — until one exits 0; anything not installed is skipped. It
+`aicp` runs an AI coding CLI to write your commit message(s) and push, walking
+a fallback chain until one exits 0; anything not installed is skipped. It
 sends that CLI two literal prompts, `/commit` then `/safe-git-push`.
+
+**The chain is yours to arrange, and it isn't a fixed set.** The built-in
+registry ships six CLIs — `copilot`, `agy`, `codex`, `claude`, `vibe`,
+`grok` — but that's only the default *order*, not a hardcoded pipeline. Move
+any one of them to the front with `aicp --swap-ai`, set the whole order from
+`aicp --config` or `AICP_CLI_ORDER`, and add your own CLIs (or drop built-in
+ones) with `aicp --agents`. Every agent in the resolved registry is a
+first-class link in the chain — there is no privileged first CLI and no cap
+on how many you run with.
 
 The part that matters: **aicp never trusts the CLI's own account of what
 happened.** An AI CLI can print "pushed!" and exit 0 while `/safe-git-push`
@@ -16,17 +24,36 @@ failed `git fetch` is never read as "already in sync" either: a stale
 remote-tracking ref resolves just fine and would otherwise report a clean
 push that never reached the remote.
 
-[Install](#install) · [Set up skills](#set-up-skills) · [Run it](#run-it) ·
-[`--undo`](#--undo) · [Automation / CI](#automation--ci) ·
-[Configuration](#configuration) · [Custom agents](#custom-agents) · [Safety](#safety) ·
-[Platform support](#platform-support)
+## Contents
+
+**Getting started**
+
+- [Requirements](#requirements)
+- [Install](#install)
+- [Set up skills](#set-up-skills)
+- [Run it](#run-it)
+
+**Using it**
+
+- [Fallback order](#fallback-order) — reorder the chain, `--swap-ai`
+- [Fallback results and quota limits](#fallback-results-and-quota-limits)
+- [`--undo`](#--undo) — take back the last commit
+- [Automation / CI](#automation--ci) — the non-interactive flags
+
+**Reference**
+
+- [Configuration](#configuration) — every setting and env var
+- [Custom agents](#custom-agents) — add your own AI CLI
+- [Safety](#safety) — the pre-commit secret scan
+- [Platform support](#platform-support) — macOS, Linux, Windows
 
 ## Requirements
 
 - Python 3.10 or newer
 - [`uv`](https://docs.astral.sh/uv/) — the install path below
 - `git`
-- At least one of the six AI CLIs above on `PATH`
+- At least one AI CLI from the chain on `PATH` (a built-in one, or your own
+  via [Custom agents](#custom-agents))
 
 The Python package itself has no runtime dependencies.
 
@@ -67,43 +94,25 @@ Targets follow each CLI's own config directory, not its binary name — `agy`
 | CLI | Config dir | `/commit` installed? | `/safe-git-push` installed? |
 | --- | --- | --- | --- |
 | `claude` | `~/.claude` | No — keeps your existing `commands/commit.md` | Yes |
-| `codex` | `~/.codex` | No — keeps your existing `/commit` | Yes |
-| `copilot` | `~/.copilot` | No — keeps your existing `/commit` | Yes |
-| `agy` (Gemini CLI) | `~/.gemini` | No — keeps your existing `/commit` | Yes |
-| `vibe` | `~/.vibe` | No — keeps your existing `/commit` | Yes |
-| `grok` | `$GROK_HOME` when set, otherwise `~/.grok` | No — keeps your existing `/commit` | Yes |
+| `codex` | `~/.codex` | Yes | Yes |
+| `copilot` | `~/.copilot` | Yes | Yes |
+| `agy` (Gemini CLI) | `~/.gemini` | Yes | Yes |
+| `vibe` | `~/.vibe` | Yes | Yes |
+| `grok` | `$GROK_HOME` when set, otherwise `~/.grok` | Yes | Yes |
 
-`/commit` is never installed: aicp keeps each CLI's existing command or skill
-definition. Claude resolves that definition from `commands/commit.md`; the
-other CLIs keep their existing `/commit` as well. Every configured CLI gets
-`/safe-git-push`.
+Every configured CLI gets `/safe-git-push`. `/commit` is installed everywhere
+*except* `claude`, which already resolves `/commit` from
+`commands/commit.md` — a second definition under `skills/` would compete with
+it. Which skills an agent gets is data, not a branch: it's the `skills` field
+of that agent's registry entry, so a [custom agent](#custom-agents) declares
+its own list the same way.
+
+The vendored text is rewritten per CLI on install — the shipped copy talks
+about `.claude/` and `CLAUDE.md`, which mean nothing to `codex` or `agy`, so
+each install substitutes that agent's own `config_dir` name and `memory_file`.
 
 A CLI whose config directory doesn't exist at all is skipped, never created —
 aicp only ever installs into a CLI you've actually set up.
-
-### Fallback results and quota limits
-
-The opening run panel prints the resolved chain, and the commit panel and
-final RESULT table name the CLI that handled each step (`—` when skipped).
-When a CLI emits a supported, exact quota/rate-limit signal, aicp records the
-outcome as `quota`, notifies through the usual notification path, and excludes
-that CLI from the rest of that one commit/push flow. The exclusion also
-persists: the CLI stays skipped for `AICP_QUOTA_COOLDOWN` seconds (default one
-hour, state in `~/.aicp/quota.json`), because a token or rate-limit wall
-normally stands for hours and every run inside that window would otherwise burn
-a full budget per step on a CLI that cannot succeed. A skipped CLI prints how
-long is left; `AICP_QUOTA_COOLDOWN=0` switches the cooldown off entirely, and
-deleting the file clears it.
-
-Only the `quota` outcome starts a cooldown. A timeout does not — a CLI that
-hangs on its rate limit instead of exiting is indistinguishable from one merely
-running long, and sidelining it for an hour on that guess costs more than the
-retry does.
-
-Exact detection is intentionally narrow. It is supported for Codex, Claude,
-Vibe, and Grok only; Copilot and `agy` have no verified quota signature, so a
-nonzero exit from either remains an ordinary failure and is still eligible for
-the next step.
 
 ## Run it
 
@@ -128,6 +137,52 @@ same as `aicp --config`.
 `aicp --config` is one menu for everything that isn't "commit and push
 right now": which steps run, message language, fallback CLI order, the
 skills install/upgrade view, and a health check.
+
+### Fallback order
+
+The order is a saved preference, not a property of the tool. Three ways to
+set it, all writing the same `aicp_cli_order` key:
+
+```sh
+aicp --swap-ai   # pick a CLI, it trades places with whoever holds #1
+aicp --config    # the AI CLI order row, arrow keys
+```
+
+```sh
+# ~/.aicp/config.json — or AICP_CLI_ORDER="claude codex" aicp for one run
+{ "aicp_cli_order": "claude codex copilot agy vibe grok" }
+```
+
+`--swap-ai` is a rotation, not a destructive set: the CLI you pick moves to
+`#1` and the old `#1` takes its place, so nothing falls out of the chain. It
+lists every agent in the registry, including ones whose binary isn't on
+`PATH` — a missing binary must not hide a choice you're about to install.
+Naming only the first few is enough; everything you leave out is appended
+behind them in registry order.
+
+### Fallback results and quota limits
+
+The opening run panel prints the resolved chain, and the commit panel and
+final RESULT table name the CLI that handled each step (`—` when skipped).
+When a CLI emits a supported, exact quota/rate-limit signal, aicp records the
+outcome as `quota`, notifies through the usual notification path, and excludes
+that CLI from the rest of that one commit/push flow. The exclusion also
+persists: the CLI stays skipped for `AICP_QUOTA_COOLDOWN` seconds (default one
+hour, state in `~/.aicp/quota.json`), because a token or rate-limit wall
+normally stands for hours and every run inside that window would otherwise burn
+a full budget per step on a CLI that cannot succeed. A skipped CLI prints how
+long is left; `AICP_QUOTA_COOLDOWN=0` switches the cooldown off entirely, and
+deleting the file clears it.
+
+Only the `quota` outcome starts a cooldown. A timeout does not — a CLI that
+hangs on its rate limit instead of exiting is indistinguishable from one merely
+running long, and sidelining it for an hour on that guess costs more than the
+retry does.
+
+Exact detection is intentionally narrow. It is supported for Codex, Claude,
+Vibe, and Grok only; Copilot, `agy` and any agent you add yourself have no
+verified quota signature, so a nonzero exit from those remains an ordinary
+failure and is still eligible for the next step.
 
 ### `--undo`
 
@@ -211,7 +266,7 @@ integration tests and installed-wheel checks on all three operating systems.
 | `config_dir` | Absolute path or `~/`-relative directory; home is resolved when used. |
 | `config_dir_env` | Optional environment variable overriding that directory (currently `GROK_HOME`). |
 | `skills_dir` | Relative directory inside `config_dir` where skills are installed. |
-| `skills` | Vendored skills to install: `/safe-git-push`. Every CLI keeps its existing `/commit`. |
+| `skills` | Which vendored skills to install for this agent — any of `safe-git-push`, `commit`. Omitting `commit` is how `claude` keeps its own `commands/commit.md`. |
 | `memory_file` | Instruction filename used when adapting vendored skill text. Project directory references use the basename of `config_dir`. |
 | `args` | Argument array containing exactly one standalone `{prompt}`, replaced with the complete prompt as one argument. No shell evaluation. |
 
@@ -339,7 +394,7 @@ See [`config.example.json`](config.example.json) for a ready-to-copy template.
 | `AICP_DO_COMMIT` | `1` | Run the `/commit` step. `0` = only push what's already committed. |
 | `AICP_DO_PUSH` | `1` | Run the `/safe-git-push` step. `0` = commit and stop. |
 | `AICP_LANG` | `en` | Message language: `en` or `zh-TW`, everywhere including notifications. |
-| `AICP_CLI_ORDER` | `copilot agy codex claude vibe grok` | Fallback order. A prefix is enough — any roster name left out is appended after it, in roster order. An unknown or repeated name is refused outright and the default order is used. |
+| `AICP_CLI_ORDER` | registry order (`copilot agy codex claude vibe grok` out of the box) | Fallback order, space-separated. A prefix is enough — any agent left out is appended after it, in registry order, so adding an agent never invalidates an order you already saved. An unknown or repeated name is refused outright and the default order is used. |
 | `AICP_TZ` | `Asia/Taipei` | IANA zone name used to render commit timestamps. Anything else falls back to the default. |
 | `AICP_TZ_LABEL` | `UTC+8` | Cosmetic label shown beside those timestamps; not validated. |
 | `AICP_STEP_TIMEOUT` | *(unset)* | Pins every CLI's per-step budget in seconds, skipping the formula and history below entirely. |
