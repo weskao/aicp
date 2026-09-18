@@ -1,3 +1,13 @@
+## [0.8.0] - 2026-09-18
+
+### 🐛 Bug Fixes
+
+- **agents:** Keep agent listing widths stable across toggles
+- **cli:** Parenthesize concatenated f-string for ruff ISC004
+
+### 📚 Documentation
+
+- **readme:** Document configurable agent chain and skills field
 ## [0.7.0] - 2026-09-17
 
 ### 🚀 Features
@@ -7,6 +17,10 @@
 ### 🐛 Bug Fixes
 
 - **menu:** Size panels to their own content
+
+### 📚 Documentation
+
+- **changelog:** Release v0.7.0
 ## [0.6.0] - 2026-09-17
 
 ### 📚 Documentation
