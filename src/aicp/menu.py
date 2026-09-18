@@ -442,13 +442,16 @@ def _agents_lines(state: MenuState, selected: int, message: str | None = None) -
     than read off a printed list afterwards. Sized to its own content (a
     short roster, not the terminal width) and stable across keypresses: the
     row text never changes length as the cursor moves, only which one is
-    bold. The executable column is padded to its own widest entry so the
-    state label starts in the same place on every row — the fixed-width-
-    column trick :func:`render_table` gets for free and a two-column
-    ``(label, value)`` panel does not.
+    bold. The executable column is padded to its own widest entry, and the
+    state label to the widest of all *possible* states (not just the ones
+    currently in play) — so toggling a row's state can never widen or narrow
+    the panel that toggle is being watched in. The fixed-width-column trick
+    :func:`render_table` gets for free and a two-column ``(label, value)``
+    panel does not.
     """
     rows = _agent_rows(state)
     exec_w = max((width(row.executable) for row in rows), default=0)
+    state_w = max(width(_t(state.lang, *msg)) for msg in agentcfg.STATE_LABELS.values())
     body: list[tuple[str, str]] = []
     for i, row in enumerate(rows, start=1):
         marker = "›" if selected == i else " "
@@ -458,7 +461,8 @@ def _agents_lines(state: MenuState, selected: int, message: str | None = None) -
             label = f"{RESET}{BOLD}{label}{RESET}"
         state_label = _t(state.lang, *agentcfg.STATE_LABELS[row.state])
         pad = " " * (exec_w - width(row.executable))
-        value = f"{color}{mark}{RESET} {row.executable}{pad}  {DIM}{state_label}{RESET}"
+        state_pad = " " * (state_w - width(state_label))
+        value = f"{color}{mark}{RESET} {row.executable}{pad}  {DIM}{state_label}{state_pad}{RESET}"
         body.append((label, value))
     notes = [message] if message else []
     notes.append(

@@ -305,9 +305,15 @@ def _doctor(*, as_json: bool) -> int:
 
 
 def _agents_list() -> int:
+    inventory = agents.inventory()
+    exec_w = max((present.width(row.executable) for row in inventory), default=0)
     rows = [
-        (row.name, f"{row.executable}  {DIM}·  {t(*agentcfg.STATE_LABELS[row.state])}{RESET}")
-        for row in agents.inventory()
+        (
+            row.name,
+            f"{row.executable}{' ' * (exec_w - present.width(row.executable))}"
+            f"  {DIM}·  {t(*agentcfg.STATE_LABELS[row.state])}{RESET}",
+        )
+        for row in inventory
     ]
     _echo(present.render(rows, t("agents_title", "AGENTS")))
     _dim(t("agents_hint", "  aicp --agents set <name> executable=… · disable <name> · reset <name>"))
