@@ -310,8 +310,10 @@ def _agents_list() -> int:
     rows = [
         (
             row.name,
-            f"{row.executable}{' ' * (exec_w - present.width(row.executable))}"
-            f"  {DIM}·  {t(*agentcfg.STATE_LABELS[row.state])}{RESET}",
+            (
+                f"{row.executable}{' ' * (exec_w - present.width(row.executable))}"
+                f"  {DIM}·  {t(*agentcfg.STATE_LABELS[row.state])}{RESET}"
+            ),
         )
         for row in inventory
     ]
