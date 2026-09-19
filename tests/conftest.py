@@ -61,6 +61,11 @@ def pinned_environment(tmp_path, monkeypatch):
       ``AICP_TIMING_LOG`` pointed at throwaway paths under it — so no test
       run, however it fails, ever reads or writes the developer's real
       ``~/.aicprc`` or ``~/.aicp/timing.log``.
+    - ``TG_BOT_TOKEN``/``TG_CHAT_ID`` cleared — ``aicp.notify`` reads these
+      straight from the environment (see its module docstring), and this is
+      exactly the kind of machine that already has a real bot token exported
+      for ``tg-send.sh``. Without this, any test that calls ``notify()``
+      without explicitly mocking the send would fire a real Telegram message.
     """
     monkeypatch.setenv("LANG", "en_US.UTF-8")
     monkeypatch.delenv("LC_ALL", raising=False)
@@ -76,6 +81,8 @@ def pinned_environment(tmp_path, monkeypatch):
         monkeypatch.setenv("USERPROFILE", str(fake_home))
     monkeypatch.setenv("AICP_CONFIG", str(fake_home / "nonexistent.aicprc"))
     monkeypatch.setenv("AICP_TIMING_LOG", str(fake_home / ".aicp" / "timing.log"))
+    monkeypatch.delenv("TG_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TG_CHAT_ID", raising=False)
     yield fake_home
 
 
