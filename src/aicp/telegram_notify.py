@@ -42,7 +42,7 @@ def demo() -> None:
         def read(self):
             return b"{}"
 
-    import unittest.mock as mock
+    from unittest import mock
 
     with mock.patch("urllib.request.urlopen", return_value=_FakeResponse()):
         assert send_telegram("tok", "42", "hello") is True

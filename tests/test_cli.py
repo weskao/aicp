@@ -93,11 +93,9 @@ def restore_process_globals():
 def aicprc(pinned_environment, monkeypatch) -> Path:
     """An existing (empty) ``.aicprc``, so the first-run menu never fires.
 
-    Also points ``AICP_TG_SEND`` at a path that does not exist — the same
-    guard ``test_aicp.sh`` applies to every one of its runs, so no test can
-    reach a real Telegram send even if HOME isolation ever regressed.
+    Real Telegram sends are already blocked for every test by
+    ``pinned_environment`` clearing ``TG_BOT_TOKEN``/``TG_CHAT_ID``.
     """
-    monkeypatch.setenv("AICP_TG_SEND", str(pinned_environment / "no-such-tg-send.sh"))
     path = config.config_path()
     path.write_text("", encoding="utf-8")
     return path
@@ -400,10 +398,9 @@ def test_a_secret_hit_exits_nonzero_and_invokes_no_ai_cli(
 
 
 def test_first_run_without_an_aicprc_opens_the_menu_once(
-    run, git_repo_synced, stub_cli, monkeypatch, pinned_environment
+    run, git_repo_synced, stub_cli, monkeypatch
 ):
     stub_cli()
-    monkeypatch.setenv("AICP_TG_SEND", str(pinned_environment / "no-such-tg-send.sh"))
     repo, _bare = git_repo_synced
     opened: list[int] = []
     monkeypatch.setattr(cli.menu, "config_menu", lambda **_kw: opened.append(1))
@@ -494,16 +491,14 @@ def test_a_real_environment_variable_still_beats_the_file(aicprc, git_repo, monk
 
 
 def test_the_bridge_never_imports_a_denylisted_key_from_the_file(aicprc, monkeypatch):
-    """``AICP_TG_SEND`` reaches ``bash "$value"`` — file-supplied values of it
-    must not arrive in the environment by the back door."""
-    monkeypatch.delenv("AICP_TG_SEND", raising=False)
+    """``AICP_TIMING_LOG`` reaches ``mkdir -p``/``>>``/a rename — file-supplied
+    values of it must not arrive in the environment by the back door."""
     monkeypatch.delenv("AICP_TIMING_LOG", raising=False)
     aicprc.write_text(
-        json.dumps({"AICP_TG_SEND": "/tmp/evil.sh", "AICP_TIMING_LOG": "/tmp/evil.log"}),
+        json.dumps({"AICP_TIMING_LOG": "/tmp/evil.log"}),
         encoding="utf-8",
     )
     cli.export_settings(config.resolve())
-    assert "AICP_TG_SEND" not in os.environ
     assert "AICP_TIMING_LOG" not in os.environ
 
 

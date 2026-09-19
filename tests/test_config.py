@@ -219,13 +219,13 @@ def test_arithmetic_assignment_value_never_reaches_path(cfg):
 
 
 def test_denylist_names_every_environment_only_knob():
-    # AICP_CONFIG joined the two exec-path/path-mutation knobs once cli.py
-    # began exporting accepted values back into os.environ: a file naming
-    # itself would otherwise re-point the next persist_key write.
-    assert set(DENYLIST) == {"AICP_TG_SEND", "AICP_TIMING_LOG", "AICP_CONFIG"}
+    # AICP_CONFIG joined the path-mutation knob once cli.py began exporting
+    # accepted values back into os.environ: a file naming itself would
+    # otherwise re-point the next persist_key write.
+    assert set(DENYLIST) == {"AICP_TIMING_LOG", "AICP_CONFIG"}
 
 
-@pytest.mark.parametrize("key", ["AICP_TG_SEND", "AICP_TIMING_LOG", "AICP_CONFIG"])
+@pytest.mark.parametrize("key", ["AICP_TIMING_LOG", "AICP_CONFIG"])
 def test_denylisted_key_from_config_is_refused_and_announced(
     cfg, marker_payload, capsys, key
 ):
@@ -240,7 +240,7 @@ def test_denylisted_key_from_config_is_refused_and_announced(
     assert key in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("key", ["aicp_tg_send", "aicp_timing_log", "aicp_config"])
+@pytest.mark.parametrize("key", ["aicp_timing_log", "aicp_config"])
 def test_a_lower_case_denylisted_key_is_still_refused(cfg, marker_payload, capsys, key):
     """Case-folding a config key to its canonical form (see
     ``_read_json_object``) must never let a lower_case spelling of a
@@ -265,7 +265,7 @@ def test_denylisted_config_path_is_never_created(cfg, tmp_path, capsys):
     assert "AICP_TIMING_LOG" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("key", ["AICP_TG_SEND", "AICP_TIMING_LOG"])
+@pytest.mark.parametrize("key", ["AICP_TIMING_LOG"])
 def test_denylisted_key_from_the_real_environment_still_works(cfg, monkeypatch, key):
     """The env-var escape hatch is the one legitimate, user-controlled way to
     set these — only the FILE is refused."""

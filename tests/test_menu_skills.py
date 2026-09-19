@@ -177,8 +177,10 @@ def test_the_doctor_row_reports_a_dropped_config_key(menu):
 
 
 def test_the_doctor_row_reports_a_denylisted_key(menu):
-    _, out, _ = menu(f"{DOCTOR_ROW}\nq\n", initial=json.dumps({"AICP_TG_SEND": "/tmp/x.sh"}))
-    assert "AICP_TG_SEND" in out
+    _, out, _ = menu(
+        f"{DOCTOR_ROW}\nq\n", initial=json.dumps({"AICP_TIMING_LOG": "/tmp/x.log"})
+    )
+    assert "AICP_TIMING_LOG" in out
 
 
 def test_the_report_is_not_stale_after_another_row_writes_the_config(menu):
