@@ -1,3 +1,16 @@
+## [0.9.0] - 2026-09-19
+
+### 🚀 Features
+
+- **notify:** Use direct Telegram delivery and row highlight
+
+### 🐛 Bug Fixes
+
+- Switch notifications to bot api
+
+### 🧪 Testing
+
+- Isolate Telegram credentials
 ## [0.8.0] - 2026-09-18
 
 ### 🐛 Bug Fixes
@@ -8,6 +21,7 @@
 ### 📚 Documentation
 
 - **readme:** Document configurable agent chain and skills field
+- **changelog:** Release v0.8.0
 ## [0.7.0] - 2026-09-17
 
 ### 🚀 Features
