@@ -407,16 +407,22 @@ See [`config.example.json`](config.example.json) for a ready-to-copy template.
 | `AICP_QUOTA_COOLDOWN` | `3600` | Seconds a CLI that reported a quota/rate-limit signal stays skipped, across runs (state in `~/.aicp/quota.json`). `0` switches the feature off; anything not a plain integer in 1..604800 falls back to the default. |
 | `AICP_SKIP_SECRET_SCAN` | *(unset)* | `1` bypasses the pre-commit secret scan for one run — the documented escape for a false positive. |
 | `AICP_CONFIG` | `~/.aicp/config.json` | Which file this loader reads. Environment-variable only — a file can't rename itself. |
-| `AICP_TG_SEND` | `~/.claude/scripts/tg-send.sh` | The Telegram send script run at the end of a notification. **Environment-variable only** — refused if set in `config.json`. |
 | `AICP_TIMING_LOG` | `~/.aicp/timing.log` | Where per-CLI timing rows are appended (rotated at 5 MB, 5 kept). **Environment-variable only** — refused if set in `config.json`. |
+| `TG_BOT_TOKEN` | *(unset)* | Telegram bot token used to send the end-of-run notification — sent directly to the Bot API via stdlib HTTP (`aicp.telegram_notify`), no external script or project required. Same name `~/.claude/scripts/tg-send.sh` already uses, so an existing setup carries over. Not part of the `AICP_*` config system at all (see below), so it can only ever be a real environment variable. |
+| `TG_CHAT_ID` | *(unset)* | Telegram chat to notify. Same rules as `TG_BOT_TOKEN`. |
 
-`AICP_TG_SEND` and `AICP_TIMING_LOG` are refused from `config.json` on
-purpose: both name a path that then gets *executed* (`AICP_TG_SEND`, run as a
-script) or *written and rotated* (`AICP_TIMING_LOG`, `mkdir -p` / `>>` / a
-rename). A config file is exactly the kind of thing that can arrive synced
-from someone else's dotfiles repo, so anything that becomes a command or a
-filesystem sink stays a real-environment-only decision — set it in your
-shell, not the file.
+Either `TG_BOT_TOKEN` or `TG_CHAT_ID` missing (or the request failing) just
+means the notification prints to the terminal instead — nothing about the
+commit/push run itself depends on it.
+
+`AICP_TIMING_LOG` is refused from `config.json` on purpose: it names a path
+that then gets *written and rotated* (`mkdir -p` / `>>` / a rename). A config
+file is exactly the kind of thing that can arrive synced from someone else's
+dotfiles repo, so anything that becomes a filesystem sink stays a
+real-environment-only decision — set it in your shell, not the file.
+(`TG_BOT_TOKEN`/`TG_CHAT_ID` don't need this treatment: they aren't
+`AICP_`-prefixed, so `config.json` was never able to supply them to begin
+with.)
 
 ## Safety
 

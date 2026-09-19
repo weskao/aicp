@@ -91,12 +91,11 @@ def export_settings(settings: config.Settings) -> None:
 
     Safe by construction with respect to :data:`aicp.config.DENYLIST`:
     ``settings.values`` is what :func:`aicp.config.load_config` accepted, and
-    that loader drops every denied key — ``AICP_TG_SEND`` (reaches ``bash
-    "$value"``), ``AICP_TIMING_LOG`` (path-mutating sinks) and ``AICP_CONFIG``
-    (would re-point the next ``persist_key`` write) — before they ever reach
-    here. So a file can never smuggle an exec-path or path-mutation knob into
-    the environment through this door. Whoever adds the next such knob adds it
-    to ``DENYLIST``, not to a filter here.
+    that loader drops every denied key — ``AICP_TIMING_LOG`` (path-mutating
+    sinks) and ``AICP_CONFIG`` (would re-point the next ``persist_key``
+    write) — before they ever reach here. So a file can never smuggle a
+    path-mutation knob into the environment through this door. Whoever adds
+    the next such knob adds it to ``DENYLIST``, not to a filter here.
 
     Two things this deliberately does NOT close, both stated rather than left
     to be discovered:

@@ -842,6 +842,7 @@ def _panel(
     out = out if out is not None else sys.stdout
     frame_columns, value_columns = _fit_columns(state, out)
     rows: list[tuple[str, str]] = []
+    selected_row: int | None = None
     for i, row in enumerate(ROWS, start=1):
         if row.group:
             rows.append((_t(state.lang, *row.group), ""))
@@ -857,6 +858,7 @@ def _panel(
         # headings above and keeping every hue's existing meaning intact.
         if selected == i:
             label = f"{RESET}{BOLD}{label}{RESET}"
+            selected_row = len(rows)
         rows.append(
             (
                 label,
@@ -888,7 +890,7 @@ def _panel(
     # are the line someone stuck in an unfamiliar menu actually needs.
     while notes and len(rows) + len(notes) + 4 > _terminal_size(out).lines:
         notes.pop(0)
-    return render_panel(rows, title, BLUE, notes=notes)
+    return render_panel(rows, title, BLUE, notes=notes, highlight=selected_row)
 
 
 def _write(

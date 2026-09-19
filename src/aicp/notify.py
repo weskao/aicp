@@ -1,78 +1,40 @@
 """The injected notifier — Telegram when it is there, a printed line when not.
 
-Port of ``_aicp_notify`` in ``~/scripts/bin/aicp``. Telegram lives in a
-different project (``$HOME/.claude``), so it is strictly optional: without it
-the same text is printed instead of being sent, and aicp keeps working for
-anyone who only has this repo.
+Sends straight to the Telegram Bot API via :mod:`aicp.telegram_notify`
+(stdlib HTTP, zero dependencies) — no ``~/.claude`` checkout, no shell
+script, no subprocess. aicp keeps working for anyone who only has this repo;
+without credentials it just prints the line instead of sending it.
 
 :func:`notify` is the real implementation behind ``contracts.NotifyFn`` — it
 is passed INTO the runner at the CLI entry point, never imported by it, so
-the runner stays free of any network or subprocess dependency. Two
-consequences are deliberate:
+the runner stays free of any network dependency. Nothing raises out of here:
+a notification is the last step of a run that has usually already succeeded,
+so missing credentials, a network failure or a bad response all degrade to
+the printed line.
 
-* **Nothing raises out of here.** A notification is the last step of a run
-  that has usually already succeeded; a missing script, an unreadable path, a
-  non-zero exit or a killed child all degrade to the printed line.
-* **The script path comes from the environment only**, resolved per call.
-  ``AICP_TG_SEND`` is never read from ``.aicprc``: a config file is a
-  checked-in, shareable artifact, and a path in it would be an arbitrary
-  program this module then executes.
+**Credentials come from the environment only**, resolved per call:
+``TG_BOT_TOKEN`` and ``TG_CHAT_ID`` — the same names
+``~/.claude/scripts/tg-send.sh`` already used, so an existing Telegram setup
+carries over with no reconfiguration. Neither is ever read from ``.aicprc``:
+a config file is a checked-in, shareable artifact, and a bot token in it
+would be a leaked secret the moment that file is synced or committed.
 """
 
 from __future__ import annotations
 
 import os
-import subprocess
-from pathlib import Path
 
-from ._utils import DIM, RESET, have
+from . import telegram_notify
+from ._utils import DIM, RESET
 from .i18n import t
 
-__all__ = ["notify", "tg_send_script"]
-
-# Seconds the send script gets before it is killed and the printed line takes
-# over. A notification is the last step of a run that has usually already
-# committed and pushed, so an unbounded wait here holds the whole run hostage
-# to a hung network call — the exact opposite of the "degrades to a printed
-# line" promise in this module's docstring. Generous enough for a real
-# Telegram round trip, short enough that nobody watches a dead terminal.
-SEND_TIMEOUT = 15.0
-
-
-def tg_send_script() -> Path:
-    """``$AICP_TG_SEND``, else ``$HOME/.claude/scripts/tg-send.sh``."""
-    override = os.environ.get("AICP_TG_SEND")
-    if override:
-        return Path(override)
-    return Path.home() / ".claude" / "scripts" / "tg-send.sh"
+__all__ = ["notify"]
 
 
 def _send(message: str) -> bool:
-    script = tg_send_script()
-    try:
-        if not script.is_file():
-            return False
-        # tg-send.sh is a bash script; run it under bash the way the zsh
-        # original does, falling back to executing it directly where bash is
-        # not on PATH (a Windows box without Git Bash).
-        cmd = (
-            ["bash", str(script), "send", message]
-            if have("bash")
-            else [str(script), "send", message]
-        )
-        done = subprocess.run(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-            timeout=SEND_TIMEOUT,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        # A hung script degrades exactly like a missing one: subprocess.run has
-        # already killed and reaped it by the time TimeoutExpired is raised, so
-        # nothing is left running and the caller gets the printed line.
-        return False
-    return done.returncode == 0
+    token = os.environ.get("TG_BOT_TOKEN")
+    chat_id = os.environ.get("TG_CHAT_ID")
+    return telegram_notify.send_telegram(token or "", chat_id or "", message)
 
 
 def notify(message: str) -> None:

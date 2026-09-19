@@ -205,11 +205,12 @@ def render_panel(
     accent: str,
     zebra: bool = False,
     notes: Sequence[str] = (),
+    highlight: int | None = None,
 ) -> list[str]:
     """Render *rows* (label, value pairs) as a titled rounded-frame panel.
 
-    ``zebra`` shades every other row full-width; a single-row panel never
-    bands (nothing to alternate against). ``notes`` are extra full-width,
+    ``zebra`` shades every other row full-width; ``highlight`` uses the
+    existing header band for one indexed row. ``notes`` are extra full-width,
     already-colored lines drawn inside the same frame below the rows (a blank
     separator first, then one line per note) — for content that isn't a
     (label, value) pair, such as the config menu's per-row help text and its
@@ -244,7 +245,7 @@ def render_panel(
         vpad = " " * (value_w - width(value))
         trail = " " * (inner - 4 - label_w - value_w)
         content = f"  {DIM}{label}{pad}{RESET}  {value}{vpad}{trail}"
-        band = STRIPE if (zebra and len(rows) > 1 and i % 2) else ""
+        band = HEADER if i == highlight else STRIPE if (zebra and len(rows) > 1 and i % 2) else ""
         body = f"{band}{_reband(content, band)}{RESET}" if band else content
         out.append(f"{accent}│{RESET}{body}{accent}│{RESET}")
     if notes:

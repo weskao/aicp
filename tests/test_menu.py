@@ -194,6 +194,23 @@ def test_the_cursor_row_is_bold_and_no_other_row_is():
     assert all(BOLD not in line for line in other_rows), "only the selected row should be bold"
 
 
+def test_the_cursor_row_has_a_full_width_background_and_no_other_row_does():
+    state = MenuState(Path("menu.aicprc"), True, True, "en", list(ROSTER_NAMES))
+
+    frame = _panel(state, selected=2)
+    setting_rows = [line for line in frame if re.match(r"│\s*[›\s]?\s*\d+\) ", _plain(line))]
+    selected_row = next(line for line in setting_rows if "safe-git-push" in _plain(line))
+    other_rows = [line for line in setting_rows if line != selected_row]
+    band = "\033[48;5;238;38;5;255m"
+
+    assert selected_row.startswith(f"\033[38;5;75m│\033[0m{band}")
+    body = selected_row.removeprefix("\033[38;5;75m│\033[0m").removesuffix(
+        "\033[38;5;75m│\033[0m"
+    )
+    assert body.removesuffix("\033[0m").count("\033[0m") == body.count(f"\033[0m{band}")
+    assert all(band not in line for line in other_rows)
+
+
 # ── a pick that does not exist changes nothing ───────────────────────────────
 
 

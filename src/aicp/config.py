@@ -29,22 +29,23 @@ later used AS a command or a path. Hence three more layers:
    a key is written ``aicp_do_commit``, matching the environment's
    ``AICP_DO_COMMIT`` only once case-folded on read — see
    :func:`_read_json_object`). A line naming ``PATH`` is inert text to this
-   loader, not an assignment.
+   loader, not an assignment. (Telegram credentials, ``TG_BOT_TOKEN`` and
+   ``TG_CHAT_ID``, aren't ``AICP_``-prefixed at all, so they never reach this
+   loader in the first place — see :mod:`aicp.notify`.)
 2. **Value charset allowlist** — letters, digits and
    ``/ . _ : @ + -`` plus whitespace. ``=`` and ``,`` are excluded because in
    the zsh original a value like ``PATH=0`` reaching an arithmetic context
    would assign into the real ``$PATH``; ``$``/backtick/``;``/``|``/parens
    are excluded as defence in depth for whatever the next consumer of these
    values does with them.
-3. **Denylist** (:data:`DENYLIST`) — ``AICP_TG_SEND`` (reaches
-   ``bash "$value"``), ``AICP_TIMING_LOG`` (reaches ``mkdir -p``, ``>>``,
-   ``mv -f``, ``rm -f``) and ``AICP_CONFIG`` (names the file this loader
-   reads, and the file :func:`persist_key` then ``mkdir -p``s and atomically
-   replaces) are ENVIRONMENT-VARIABLE ONLY. All three are plain literal paths
-   that sail through the charset allowlist, and all three were real holes.
-   Whoever adds the next knob that flows into an exec path or a path-mutating
-   sink adds its name here — the charset allowlist does not protect against
-   this class at all.
+3. **Denylist** (:data:`DENYLIST`) — ``AICP_TIMING_LOG`` (reaches
+   ``mkdir -p``, ``>>``, ``mv -f``, ``rm -f``) and ``AICP_CONFIG`` (names the
+   file this loader reads, and the file :func:`persist_key` then
+   ``mkdir -p``s and atomically replaces) are ENVIRONMENT-VARIABLE ONLY. Both
+   are plain literal paths that sail through the charset allowlist, and both
+   were real holes. Whoever adds the next knob that flows into an exec path
+   or a path-mutating sink adds its name here — the charset allowlist does
+   not protect against this class at all.
 
    ``AICP_CONFIG`` is the subtlest of the three, because a file naming
    *itself* looks inert: nothing in this module acts on the value. The zsh
@@ -107,7 +108,7 @@ __all__ = [
 #: synced from someone else's dotfiles repo. ``AICP_CONFIG`` belongs here for
 #: the reason spelled out in this module's docstring — a file must not be able
 #: to rename the file the next write lands on.
-DENYLIST = frozenset({"AICP_TG_SEND", "AICP_TIMING_LOG", "AICP_CONFIG"})
+DENYLIST = frozenset({"AICP_TIMING_LOG", "AICP_CONFIG"})
 
 #: Knobs resolved from the system, never from configuration — see
 #: :func:`timeout_bin`. Kept as a set so the reason is greppable from both
