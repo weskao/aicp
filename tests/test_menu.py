@@ -113,10 +113,20 @@ def test_the_language_pick_repaints_the_menu_in_the_new_language(menu):
     assert "aicp 設定" in out, "the menu must repaint in the language just picked"
 
 
+def _row_number(msgid: str) -> int:
+    return next(i for i, row in enumerate(ROWS, start=1) if row.label[0] == msgid)
+
+
 def test_the_cli_row_rotates_the_chain_and_persists_it(menu):
-    _, _out, cfg = menu("4\nq\n")
+    _, _out, cfg = menu(f"{_row_number('config_cli_order')}\nq\n")
     rotated = " ".join((*ROSTER_NAMES[1:], ROSTER_NAMES[0]))
     assert json.loads(cfg.read_text(encoding="utf-8"))["aicp_cli_order"] == rotated
+
+
+def test_the_update_check_toggle_is_written_immediately(menu):
+    _, out, cfg = menu(f"{_row_number('config_update_check')}\nq\n")
+    assert json.loads(cfg.read_text(encoding="utf-8"))["aicp_update_check"] == "0"
+    assert "Check for updates" in out
 
 
 def test_cli_order_motion_slides_one_name_and_keeps_every_frame_one_width():
@@ -430,6 +440,7 @@ def test_rows_are_data_addressed_by_index(menu):
         "AICP_DO_COMMIT",
         "AICP_DO_PUSH",
         "AICP_LANG",
+        "AICP_UPDATE_CHECK",
         "AICP_CLI_ORDER",
         "",
         "",

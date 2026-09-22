@@ -144,6 +144,7 @@ CATALOG: dict[str, str] = {
     "config_do_commit": "執行 /commit 階段",
     "config_do_push": "執行 /safe-git-push 階段",
     "config_language": "語言",
+    "config_update_check": "檢查更新",
     "config_cli_order": "AI CLI 順序",
     # The feature is called Skills in every AI CLI that has it; translating it
     # would only make the row harder to match to what the vendors call it.
@@ -155,6 +156,7 @@ CATALOG: dict[str, str] = {
     "config_help_commit": "關閉時不 stage 也不 commit，只推送已經 commit 的內容。",
     "config_help_push": "關閉時只做 commit 就停下，分支會領先遠端。",
     "config_help_lang": "所有訊息的語言，包含 Telegram 通知。",
+    "config_help_update_check": "開啟時，每次指令結束若 PyPI 有更新的 aicp-cli 就提示。",
     "config_help_cli": "完整的 fallback 順序，由左到右依序嘗試；←/→ 可輪替順序，未安裝的 CLI 會自動跳過。",
     "config_help_skills": "把 aicp 的 /commit 與 /safe-git-push 裝進每個 AI CLI，你自己的同名檔案一律保留。",
     "config_help_agents": "aicp 認得哪些 AI CLI。可以關掉其中一個，或用 --agents set 加上你自己的。",
@@ -228,6 +230,8 @@ CATALOG: dict[str, str] = {
     "health_no_remote": "這個 repo 沒有 git remote — 可以 commit，但沒有地方 push",
     "health_git_ok": "分支 %s → remote %s",
     # ── --help (argparse's own furniture stays English; see cli.py) ─────────
+    "update_available": "aicp %s 已推出（目前是 %s）",
+    "update_command": "  uv tool upgrade aicp-cli",
     "help_description": "AI commit + push，附一份 git 驗證過的結果摘要。",
     "help_verbose": "即時輸出每個 CLI 的內容，不用轉圈動畫",
     "help_undo": "還原最後一個 commit（git reset --soft HEAD^）；已經在遠端上就拒絕。不呼叫任何 AI CLI",

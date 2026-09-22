@@ -48,6 +48,7 @@ from . import (
     present,
     runner,
     skills,
+    update_check,
 )
 from ._utils import BLUE, BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW, have
 from .agents import executable
@@ -693,23 +694,63 @@ def _dispatch(args: argparse.Namespace) -> int:
     return _flow(settings, verbose=args.verbose)
 
 
+def _update_cache_path() -> Path:
+    return Path.home() / ".aicp" / "update-check.json"
+
+
+def _maybe_update_hint() -> None:
+    """Print a PyPI upgrade hint on stderr. Never changes the exit code."""
+    try:
+        settings = config.resolve()
+        if not settings.update_check:
+            return
+        found = update_check.check(
+            "aicp-cli",
+            __version__,
+            cache_path=_update_cache_path(),
+        )
+        if found is None:
+            return
+        print(
+            t(
+                "update_available",
+                "aicp %s is available (you have %s)",
+                found.latest,
+                found.current,
+            ),
+            file=sys.stderr,
+        )
+        print(
+            t("update_command", "  uv tool upgrade aicp-cli"),
+            file=sys.stderr,
+        )
+    except Exception:  # noqa: BLE001 - a hint must never fail the command
+        return
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     raw = sys.argv[1:] if argv is None else argv
+    rc = 0
     try:
         args = parser.parse_args(_normalize_argv(raw, parser))
         _reject_orphan_sub_flags(parser, args)
     except SystemExit as exc:  # --help/--version (0), or a bad flag (1)
-        return int(exc.code or 0)
+        rc = int(exc.code or 0)
+        if rc == 0:
+            _maybe_update_hint()
+        return rc
 
     try:
-        return _dispatch(args)
+        rc = _dispatch(args)
     except KeyboardInterrupt:
         print(
             f"{YELLOW}⚠{RESET} "
             + t("interrupted", "interrupted (Ctrl+C) — aborting, no further steps run")
         )
-        return runner.ABORT_RC
+        rc = runner.ABORT_RC
+    _maybe_update_hint()
+    return rc
 
 
 if __name__ == "__main__":

@@ -96,6 +96,7 @@ def test_missing_config_file_changes_nothing():
     assert load_config(settings.path) == {}
     assert settings.do_commit is True
     assert settings.do_push is True
+    assert settings.update_check is True
     assert settings.lang == "en"
     assert tuple(settings.cli_chain) == ROSTER_NAMES
 
@@ -333,10 +334,11 @@ def test_invalid_booleans_announce_and_fall_back_to_on(cfg, capsys, value):
 
 @pytest.mark.parametrize(("value", "expected"), [("0", False), ("1", True)])
 def test_valid_booleans_are_honoured(cfg, value, expected):
-    cfg({"AICP_DO_COMMIT": value, "AICP_DO_PUSH": value})
+    cfg({"AICP_DO_COMMIT": value, "AICP_DO_PUSH": value, "AICP_UPDATE_CHECK": value})
     settings = resolve()
     assert settings.do_commit is expected
     assert settings.do_push is expected
+    assert settings.update_check is expected
 
 
 def test_invalid_language_announces_and_falls_back_to_en(cfg, capsys):

@@ -103,6 +103,7 @@ class MenuState:
     do_push: bool
     lang: str
     chain: list[str]
+    update_check: bool = True
     #: Probe caches for the two action rows. The panel repaints on every
     #: keypress, and both of those rows show live status in their value
     #: column — walking the filesystem and shelling out to git once per
@@ -120,6 +121,7 @@ class MenuState:
             do_push=settings.do_push,
             lang=settings.lang,
             chain=list(settings.cli_chain),
+            update_check=settings.update_check,
         )
 
 
@@ -159,6 +161,11 @@ def _toggle_commit(state: MenuState, _direction: int) -> str:
 def _toggle_push(state: MenuState, _direction: int) -> str:
     state.do_push = not state.do_push
     return "1" if state.do_push else "0"
+
+
+def _toggle_update_check(state: MenuState, _direction: int) -> str:
+    state.update_check = not state.update_check
+    return "1" if state.update_check else "0"
 
 
 def _toggle_lang(state: MenuState, _direction: int) -> str:
@@ -717,6 +724,18 @@ ROWS: tuple[Row, ...] = (
         value=lambda s: "繁體中文" if s.lang == "zh-TW" else "English",
         accent=lambda _s: CYAN,
         cycle=_toggle_lang,
+    ),
+    Row(
+        key="AICP_UPDATE_CHECK",
+        group=None,
+        label=("config_update_check", "Check for updates"),
+        help=(
+            "config_help_update_check",
+            "On: after each command, hint when a newer aicp-cli exists.",
+        ),
+        value=lambda s: _on_off(s, s.update_check),
+        accent=lambda s: GREEN if s.update_check else DIM,
+        cycle=_toggle_update_check,
     ),
     Row(
         key="AICP_CLI_ORDER",

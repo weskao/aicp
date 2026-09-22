@@ -69,6 +69,15 @@ def prompts(call_log: Path) -> list[str]:
 
 
 @pytest.fixture(autouse=True)
+def silence_pypi(monkeypatch):
+    """Existing tests must not hit PyPI or print an update hint."""
+    monkeypatch.setattr(
+        "aicp.update_check.fetch_pypi",
+        lambda *_a, **_k: json.dumps({"info": {"version": "0.0.0"}}),
+    )
+
+
+@pytest.fixture(autouse=True)
 def restore_process_globals():
     """Undo what the D3 bridge exports.
 
@@ -555,6 +564,51 @@ def test_a_real_run_applies_the_bridge(run, aicprc, git_repo_synced, stub_cli):
     aicprc.write_text(json.dumps({"AICP_TZ": "Asia/Tokyo"}), encoding="utf-8")
     assert run(repo) == 0
     assert gitflow.resolve_tz() == "Asia/Tokyo"
+
+
+def test_a_newer_pypi_release_prints_an_upgrade_hint_on_stderr(
+    run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
+):
+    stub_cli()
+    monkeypatch.setattr(
+        "aicp.update_check.fetch_pypi",
+        lambda *_a, **_k: json.dumps({"info": {"version": "99.0.0"}}),
+    )
+    repo, _bare = git_repo_synced
+    assert run(repo) == 0
+    err = capsys.readouterr().err
+    assert "99.0.0 is available" in err
+    assert "uv tool upgrade aicp-cli" in err
+
+
+def test_update_check_off_prints_no_hint(
+    run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
+):
+    stub_cli()
+    aicprc.write_text(json.dumps({"AICP_UPDATE_CHECK": "0"}), encoding="utf-8")
+    monkeypatch.setattr(
+        "aicp.update_check.fetch_pypi",
+        lambda *_a, **_k: json.dumps({"info": {"version": "99.0.0"}}),
+    )
+    repo, _bare = git_repo_synced
+    assert run(repo) == 0
+    err = capsys.readouterr().err
+    assert "99.0.0" not in err
+    assert "uv tool upgrade" not in err
+
+
+def test_update_hint_does_not_mix_into_json_stdout(
+    run, aicprc, git_repo, stub_cli, monkeypatch, capsys
+):
+    stub_cli()
+    monkeypatch.setattr(
+        "aicp.update_check.fetch_pypi",
+        lambda *_a, **_k: json.dumps({"info": {"version": "99.0.0"}}),
+    )
+    assert run(git_repo, "--doctor", "--json") == 0
+    captured = capsys.readouterr()
+    json.loads(captured.out)
+    assert "99.0.0 is available" in captured.err
 
 
 # ── wiring contracts ─────────────────────────────────────────────────────────

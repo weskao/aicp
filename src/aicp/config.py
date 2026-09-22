@@ -144,6 +144,7 @@ class Settings:
     path: Path
     do_commit: bool = True
     do_push: bool = True
+    update_check: bool = True
     lang: str = "en"
     tz: str = _DEFAULT_TZ
     cli_chain: tuple[str, ...] = _ROSTER_NAMES
@@ -400,6 +401,7 @@ def resolve(env: Mapping[str, str] | None = None) -> Settings:
         path=path,
         do_commit=_boolean("AICP_DO_COMMIT", values.get("AICP_DO_COMMIT")),
         do_push=_boolean("AICP_DO_PUSH", values.get("AICP_DO_PUSH")),
+        update_check=_boolean("AICP_UPDATE_CHECK", values.get("AICP_UPDATE_CHECK")),
         lang=_language(values.get("AICP_LANG")),
         tz=_timezone(values.get("AICP_TZ")),
         cli_chain=tuple(resolve_cli_chain(values.get("AICP_CLI_ORDER"))),
