@@ -475,9 +475,10 @@ def _agents_tui(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
     """Arrow-key loop opened by the Agents row: ↑↓ moves, ⏎/←/→ toggles the
     highlighted agent on/off through :func:`agentcfg.apply` — saved
     immediately, same as every other row — and q leaves. Returns the last
-    frame it drew, so the caller can erase exactly that many rows before
-    repainting the row it came from, instead of leaving this panel behind
-    like the Skills/Doctor reports do.
+    frame it drew; the caller must erase that many rows *plus* the parent
+    panel still sitting above it, then redraw the parent once — erasing only
+    this frame leaves the old parent on screen and the next Enter stacks
+    another copy.
     """
     selected = 1
     message: str | None = None
@@ -1124,8 +1125,13 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
                         # toggle is watched happening, not read off a report,
                         # so its frame is erased like any other value change
                         # rather than left standing like Skills/Doctor's.
+                        # Agents is drawn *under* the still-visible parent, so
+                        # leaving it has to walk up parent+child before the
+                        # redraw — erasing only the child leaves the old
+                        # parent on screen and the next Enter stacks another.
                         agent_lines = _agents_tui(state, stdin, out)
-                        out.write(f"\033[{_frame_rows(agent_lines, out)}A\033[J")
+                        up = _frame_rows(lines, out) + _frame_rows(agent_lines, out)
+                        out.write(f"\033[{up}A\033[J")
                         lines = _panel(state, selected, out)
                         for line in lines:
                             print(line, file=out)

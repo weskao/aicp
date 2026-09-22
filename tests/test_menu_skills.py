@@ -266,6 +266,48 @@ def test_the_arrow_key_tui_opens_an_agents_loop_that_toggles_in_place(home):
     assert second.state == agents.DISABLED
 
 
+def test_leaving_agents_erases_the_parent_panel_before_redraw(home):
+    """q from Agents must clear the main config panel that stayed above it.
+
+    Agents is drawn under the still-visible parent. Erasing only the child
+    and then printing a fresh parent leaves the old one on screen, so the
+    next Enter Agents stacks another copy — the "panels multiply" bug.
+    StringIO cannot honour the cursor-up erase, so this asserts the CSI
+    distance itself covers parent + child.
+    """
+    from aicp import agents
+    from aicp.menu import MenuState, _agents_lines, _frame_rows, _panel, _tui
+
+    state = MenuState(
+        home / ".aicp" / "menu.aicprc", True, True, "en", [row.name for row in agents.inventory(home)]
+    )
+    out = io.StringIO()
+    parent_rows = _frame_rows(_panel(state, selected=AGENTS_ROW, out=out), out)
+    child_rows = _frame_rows(_agents_lines(state, selected=1), out)
+    down_to_agents = "down\n" * (AGENTS_ROW - 1)
+    buf = io.StringIO()
+
+    code = _tui(state, io.StringIO(f"{down_to_agents}enter\nquit\nquit\n"), buf)
+
+    assert code == 0
+    text = buf.getvalue()
+    combined = f"\033[{parent_rows + child_rows}A\033[J"
+    stepped = f"\033[{child_rows}A\033[J\033[{parent_rows}A\033[J"
+    ups = []
+    needle, i = "\033[", 0
+    while True:
+        j = text.find(needle, i)
+        if j < 0:
+            break
+        k = text.find("A", j)
+        if k > j and text[j + 2 : k].isdigit():
+            ups.append(text[j + 2 : k])
+        i = j + 2
+    assert combined in text or stepped in text, (
+        f"expected erase of parent+child ({parent_rows}+{child_rows}); CSI ups: {ups}"
+    )
+
+
 # ── CI safety: neither row blocks on a pipe ──────────────────────────────────
 
 
