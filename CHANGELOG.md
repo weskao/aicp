@@ -1,3 +1,12 @@
+## [0.9.1] - 2026-09-22
+
+### 🐛 Bug Fixes
+
+- **menu:** Erase parent panel when leaving Agents
+
+### 🧪 Testing
+
+- Isolate only-git PATH from Homebrew CLIs
 ## [0.9.0] - 2026-09-19
 
 ### 🚀 Features
@@ -7,6 +16,10 @@
 ### 🐛 Bug Fixes
 
 - Switch notifications to bot api
+
+### 📚 Documentation
+
+- **changelog:** Release v0.9.0
 
 ### 🧪 Testing
 
