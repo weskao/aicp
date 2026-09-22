@@ -142,6 +142,39 @@ def git_repo_synced(tmp_path) -> tuple[Path, Path]:
     return repo, bare
 
 
+# ── PATH isolation helpers ────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def only_git_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """PATH containing a single ``git`` shim and nothing else.
+
+    Setting PATH to ``dirname(which("git"))`` is not isolation on Homebrew:
+    ``codex`` / ``copilot`` often sit next to ``git`` in ``/opt/homebrew/bin``,
+    so preflight still finds an AI CLI. This fixture puts a forwarding shim
+    in a throwaway bin dir and points PATH only there.
+    """
+    git_bin = shutil.which("git")
+    assert git_bin, "the suite needs git on PATH"
+    bin_dir = tmp_path / "only-git-bin"
+    bin_dir.mkdir()
+    if sys.platform == "win32":
+        shim = bin_dir / "git.cmd"
+        shim.write_text(
+            f'@echo off\r\n"{git_bin}" %*\r\n',
+            encoding="utf-8",
+        )
+    else:
+        shim = bin_dir / "git"
+        shim.write_text(
+            f'#!/bin/sh\nexec "{git_bin}" "$@"\n',
+            encoding="utf-8",
+        )
+        shim.chmod(shim.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    return bin_dir
+
+
 # ── stub AI CLIs ──────────────────────────────────────────────────────────────
 
 #: Every fallback CLI binary name aicp.contracts.ROSTER knows about. Kept as

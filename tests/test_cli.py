@@ -19,7 +19,6 @@ from __future__ import annotations
 import ast
 import json
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -367,13 +366,12 @@ def test_a_clean_in_sync_repo_needs_no_ai_cli_installed(run, aicprc, git_repo_sy
 
 
 def test_no_ai_cli_installed_with_pending_work_fails_before_the_scan(
-    run, aicprc, git_repo, monkeypatch, capsys
+    run, aicprc, git_repo, only_git_on_path, capsys
 ):
-    git_bin = shutil.which("git")
-    assert git_bin  # the suite cannot run without it
     # git stays reachable, no AI CLI of any name does — the state a machine
-    # with none of the five installed is actually in.
-    monkeypatch.setenv("PATH", str(Path(git_bin).parent))
+    # with none of the roster installed is actually in. (only_git_on_path
+    # uses a throwaway bin dir; dirname(which("git")) is not isolation on
+    # Homebrew, where codex/copilot sit next to git.)
     (git_repo / "pending.txt").write_text("work\n", encoding="utf-8")
     assert run(git_repo) == 1
     assert "no AI CLI found on PATH" in capsys.readouterr().out

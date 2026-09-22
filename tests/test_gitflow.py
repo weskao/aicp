@@ -8,7 +8,6 @@ CLI's own output — that is the whole point of the RESULT table.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -37,14 +36,6 @@ def make_commit(repo: Path, name: str, message: str, body: str = "") -> str:
         args += ["-m", body]
     git(repo, *args)
     return git(repo, "rev-parse", "HEAD").stdout.strip()
-
-
-@pytest.fixture
-def only_git_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """PATH holding git and nothing else — no AI CLI is installed."""
-    git_bin = shutil.which("git")
-    assert git_bin, "the suite needs git on PATH"
-    monkeypatch.setenv("PATH", str(Path(git_bin).parent))
 
 
 CHAIN = tuple(c.name for c in ROSTER)
