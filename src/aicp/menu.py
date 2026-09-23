@@ -27,12 +27,16 @@ that returns the string to persist. Nothing in this module hardcodes a count.
 
 The Skills, Agents and Doctor rows were added exactly that way, and are the
 reason a row may carry an ``action`` instead of a ``cycle``: they *do*
-something (install skills, turn an agent on or off, print a health report)
+something (install skills, turn an agent on or off, show a health report)
 rather than persist a setting, and they show live status in their value
-column. They are rows and not subcommands on purpose — ``aicp`` and ``aicp
---config`` are the only two things this tool ever asks anyone to remember.
-Agents is the one that also has a scriptable twin, ``aicp --agents``, because
-adding an agent means supplying six fields, which is a form and not a row.
+column. Doctor is special among them: the arrow-key TUI expands the full
+report inside the panel as soon as that row is selected, so Enter/←/→ on it
+are deliberately no-ops; the numbered fallback still prints the same report
+via the row's ``action``. They are rows and not subcommands on purpose —
+``aicp`` and ``aicp --config`` are the only two things this tool ever asks
+anyone to remember. Agents is the one that also has a scriptable twin,
+``aicp --agents``, because adding an agent means supplying six fields, which
+is a form and not a row.
 """
 
 from __future__ import annotations
@@ -131,9 +135,11 @@ class Row:
 
     A row either *persists* (``key`` + ``cycle``) or *acts* (``action``, with
     an empty ``key``): the Skills and Doctor rows run something and write no
-    setting at all. Everything else — numbering, the value column, bounds,
-    dispatch — is identical either way, which is the whole point of keeping
-    the menu a list of data rather than a switch statement.
+    setting at all. Doctor's ``action`` is only for the numbered fallback —
+    the TUI expands its report in the panel on highlight instead. Everything
+    else — numbering, the value column, bounds, dispatch — is identical
+    either way, which is the whole point of keeping the menu a list of data
+    rather than a switch statement.
     """
 
     key: str
@@ -663,8 +669,42 @@ def _doctor_value(state: MenuState) -> str:
     return _t(state.lang, "doctor_many", f"{_WARN} %s warnings", count)
 
 
+def _is_doctor(row: Row) -> bool:
+    return row.label[0] == "config_doctor"
+
+
+def _doctor_detail_notes(state: MenuState, budget: int) -> list[str]:
+    """Full health-report lines, fitted to *budget* so selecting Doctor cannot
+    widen the panel past the help-text reserve every other row already sized
+    for (see ``test_selecting_a_different_row_does_not_resize_the_panel``)."""
+    lines = _health(state)
+    notes: list[str] = []
+    for mark, text in lines:
+        color = YELLOW if mark == _WARN else GREEN
+        body_budget = max(budget - width(f"{mark} "), 1)
+        notes.append(f"{color}{mark}{RESET} {_fit(text, body_budget)}")
+    if any(mark == _WARN for mark, _ in lines):
+        notes.append(
+            f"{DIM}"
+            + _fit(
+                _t(
+                    state.lang,
+                    "health_footer",
+                    "Warnings are things to know about, not failures — aicp runs either way.",
+                ),
+                budget,
+            )
+            + f"{RESET}"
+        )
+    return notes
+
+
 def _doctor_action(state: MenuState, _stdin: IO[str], out: IO[str]) -> None:
-    """Print the report. Asks nothing, so there is nothing to block on."""
+    """Print the report for the numbered fallback.
+
+    The arrow-key TUI expands the same lines inside the panel when Doctor is
+    selected, so it never calls this. Asks nothing — nothing to block on.
+    """
     lines = _health(state)
     print(file=out)
     print(_t(state.lang, "config_doctor", "Health check"), file=out)  # the row's own label
@@ -849,10 +889,12 @@ def _panel(
     Always titled with aicp's own version, so a bug report or a screenshot
     names the build it came from. ``selected`` (only ever given by the
     arrow-key TUI, which is the one surface with a single current row) adds
-    two more lines inside the frame: that row's own help text — 各項目說明,
+    more lines inside the frame: that row's own help text — 各項目說明,
     reusing exactly the ``help`` every row already carries, never a second
-    copy of it — and the arrow-key hint (操作說明). The numbered fallback has
-    no single current row, so it gets only the digit-choice hint instead.
+    copy of it — the arrow-key hint (操作說明), and, when Doctor is the
+    current row, the full health report so the details appear on highlight
+    without needing Enter. The numbered fallback has no single current row,
+    so it gets only the digit-choice hint instead.
 
     ``order_value`` swaps in an already-rendered motion frame for the AI CLI
     order row (see :func:`_order_motion`); everything else about the panel is
@@ -890,26 +932,55 @@ def _panel(
         # Reserve the widest help line ANY row can show, not just the selected
         # one's — otherwise the frame narrows and widens as the cursor moves
         # across rows with shorter and longer help text (render_panel sizes
-        # its own width off the notes it is handed).
+        # its own width off the notes it is handed). Doctor's detail lines
+        # are fitted to that same reserve so highlighting it cannot widen
+        # the frame either.
         help_budget = frame_columns - 4
         fitted_help = [_fit(_t(state.lang, *row.help), help_budget) for row in ROWS]
         reserve = max(width(h) for h in fitted_help)
         help_line = fitted_help[selected - 1]
         help_line += " " * (reserve - width(help_line))
-        texts = [
-            help_line,
-            "",
-            _t(state.lang, "config_keys_tui", "↑↓ select · ←→ change · ⏎ change/run · q/Ctrl-C quit · saves as you go"),
-        ]
+        notes = [f"{DIM}{help_line}{RESET}", ""]
+        if _is_doctor(ROWS[selected - 1]):
+            notes.extend(_doctor_detail_notes(state, reserve))
+            notes.append("")
+        notes.append(
+            f"{DIM}"
+            + _fit(
+                _t(
+                    state.lang,
+                    "config_keys_tui",
+                    "↑↓ select · ←→ change · ⏎ change/run · q/Ctrl-C quit · saves as you go",
+                ),
+                help_budget,
+            )
+            + f"{RESET}"
+        )
     else:
-        texts = [_t(state.lang, "config_keys_plain", "1-%s change · q quit · saves as you go", len(ROWS))]
-    notes = [f"{DIM}{_fit(text, frame_columns - 4)}{RESET}" for text in texts]
+        notes = [
+            f"{DIM}"
+            + _fit(
+                _t(
+                    state.lang,
+                    "config_keys_plain",
+                    "1-%s change · q quit · saves as you go",
+                    len(ROWS),
+                ),
+                frame_columns - 4,
+            )
+            + f"{RESET}"
+        ]
     # A frame taller than the terminal cannot be repainted in place either —
     # its top scrolls off, and the cursor can never walk back up to it. The
-    # notes are what a short window gives up, help text first: the key hints
-    # are the line someone stuck in an unfamiliar menu actually needs.
+    # notes are what a short window gives up. Prefer dropping help text,
+    # blanks, and ✓ detail lines before ⚠ warnings; the key-hint footer is
+    # always last and is what someone stuck in an unfamiliar menu needs.
     while notes and len(rows) + len(notes) + 4 > _terminal_size(out).lines:
-        notes.pop(0)
+        drop = next(
+            (i for i, note in enumerate(notes[:-1]) if _WARN not in note),
+            0,
+        )
+        notes.pop(drop)
     return render_panel(rows, title, BLUE, notes=notes, highlight=selected_row)
 
 
@@ -1139,11 +1210,15 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
                 elif key in ("left", "right", "enter"):
                     row = ROWS[selected - 1]
                     before = list(state.chain)
+                    if _is_doctor(row):
+                        # Details are already expanded in the panel while this
+                        # row is highlighted; Enter/←/→ must not reprint them.
+                        continue
                     if row.action is _agents_action:
                         # The one action row with its own arrow-key loop: a
                         # toggle is watched happening, not read off a report,
                         # so its frame is erased like any other value change
-                        # rather than left standing like Skills/Doctor's.
+                        # rather than left standing like Skills'.
                         # Agents is drawn *under* the still-visible parent, so
                         # leaving it has to walk up parent+child before the
                         # redraw — erasing only the child leaves the old

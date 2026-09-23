@@ -199,6 +199,46 @@ def test_warnings_do_not_read_as_errors(menu, monkeypatch):
     assert "✗" not in out, "a warning is not a failure"
 
 
+def test_doctor_details_expand_when_the_row_is_highlighted(monkeypatch):
+    """Arrow onto Health check → the full report is already in the panel.
+
+    Enter must not be required to see it (and is a no-op on that row in the
+    TUI). The numbered fallback still prints via the row action; this covers
+    the highlight path the suite can drive without a TTY.
+    """
+    from aicp.contracts import ROSTER
+    from aicp.menu import MenuState, _panel
+
+    monkeypatch.setattr("aicp.menu.timeout_bin", lambda: None)
+    state = MenuState(
+        Path("menu.aicprc"), True, True, "en", [c.name for c in ROSTER]
+    )
+
+    on_doctor = "\n".join(_panel(state, selected=DOCTOR_ROW))
+    on_other = "\n".join(_panel(state, selected=1))
+
+    assert "no timeout/gtimeout on PATH" in on_doctor
+    assert "no time limit" in on_doctor
+    assert "no timeout/gtimeout on PATH" not in on_other
+
+
+def test_highlighting_doctor_does_not_widen_the_panel(monkeypatch):
+    """Same width contract as every other row — long health lines are fitted
+    to the help-text reserve, not allowed to stretch the frame."""
+    from aicp.contracts import ROSTER
+    from aicp.menu import MenuState, _panel
+    from aicp.present import width
+
+    monkeypatch.setattr("aicp.menu.timeout_bin", lambda: None)
+    state = MenuState(
+        Path("menu.aicprc"), True, True, "en", [c.name for c in ROSTER]
+    )
+
+    widths = {width(_panel(state, selected=i)[0]) for i in range(1, len(ROWS) + 1)}
+
+    assert len(widths) == 1, "highlighting Doctor must not change the frame width"
+
+
 # ── Agents: the row that turns an AI CLI off and on ──────────────────────────
 
 
