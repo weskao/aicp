@@ -147,30 +147,38 @@ def git_repo_synced(tmp_path) -> tuple[Path, Path]:
 
 @pytest.fixture
 def only_git_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """PATH containing a single ``git`` shim and nothing else.
+    """PATH containing git and nothing from the AI CLI roster.
 
     Setting PATH to ``dirname(which("git"))`` is not isolation on Homebrew:
     ``codex`` / ``copilot`` often sit next to ``git`` in ``/opt/homebrew/bin``,
-    so preflight still finds an AI CLI. This fixture puts a forwarding shim
-    in a throwaway bin dir and points PATH only there.
+    so preflight still finds an AI CLI. On POSIX this fixture puts a forwarding
+    shim in a throwaway bin and points PATH only there.
+
+    On Windows the throwaway ``git.cmd`` approach fails for a different reason:
+    ``CreateProcess`` (``subprocess`` with ``shell=False``) does not consult
+    ``PATHEXT`` and cannot run a batch file — it looks for ``git.exe`` only.
+    ``gitflow._git`` / ``secrets._git`` launch bare ``["git", ...]``, so a
+    ``.cmd``-only PATH makes every git call look like a missing repo / detached
+    HEAD. Windows Git's own install dir also does not co-host the AI CLI roster,
+    so pointing PATH at the directory that holds the real ``git.exe`` is enough.
     """
     git_bin = shutil.which("git")
     assert git_bin, "the suite needs git on PATH"
+    if sys.platform == "win32":
+        git_exe = shutil.which("git.exe")
+        assert git_exe, "Windows PATH isolation needs a real git.exe"
+        bin_dir = Path(git_exe).resolve().parent
+        monkeypatch.setenv("PATH", str(bin_dir))
+        return bin_dir
+
     bin_dir = tmp_path / "only-git-bin"
     bin_dir.mkdir()
-    if sys.platform == "win32":
-        shim = bin_dir / "git.cmd"
-        shim.write_text(
-            f'@echo off\r\n"{git_bin}" %*\r\n',
-            encoding="utf-8",
-        )
-    else:
-        shim = bin_dir / "git"
-        shim.write_text(
-            f'#!/bin/sh\nexec "{git_bin}" "$@"\n',
-            encoding="utf-8",
-        )
-        shim.chmod(shim.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    shim = bin_dir / "git"
+    shim.write_text(
+        f'#!/bin/sh\nexec "{git_bin}" "$@"\n',
+        encoding="utf-8",
+    )
+    shim.chmod(shim.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     monkeypatch.setenv("PATH", str(bin_dir))
     return bin_dir
 
