@@ -96,6 +96,8 @@ __all__ = [
     "DENYLIST",
     "Settings",
     "config_path",
+    "export_payload",
+    "import_updates",
     "load_config",
     "persist_key",
     "resolve",
@@ -439,3 +441,33 @@ def persist_key(key: str, value: str, path: Path | str | None = None) -> bool:
     data = _read_json_object(path)
     data[key] = value
     return _write_json_private(path, data)
+
+
+def export_payload(path: Path | str | None = None) -> dict[str, str]:
+    """Every ``AICP_*`` setting *path*'s config.json legitimately supplies.
+
+    Exactly :func:`load_config`'s result: this layer stores no secret (no
+    token ever lands in ``config.json``), so nothing needs filtering before
+    the result is portable to another machine.
+    """
+    return load_config(path)
+
+
+def import_updates(data: Mapping[str, object]) -> tuple[dict[str, str], tuple[str, ...]]:
+    """``(accepted, skipped)`` for *data* run through the same rules a
+    config.json read applies.
+
+    Denylisted keys, system-resolved keys, non-``AICP_`` keys, non-string
+    values and anything outside the value charset are skipped rather than
+    aborting the whole import — the same one-bad-key-never-costs-the-rest
+    rule :func:`load_config` already applies to a hand-edited file.
+    """
+    accepted: dict[str, str] = {}
+    skipped: list[str] = []
+    for key, value in data.items():
+        result = _accept(key, value) if isinstance(value, str) else None
+        if result is None:
+            skipped.append(key)
+        else:
+            accepted[key] = result
+    return accepted, tuple(skipped)

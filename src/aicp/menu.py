@@ -64,6 +64,9 @@ from .config import (
     DENYLIST,
     Settings,
     _read_json_object,
+    _write_json_private,
+    export_payload,
+    import_updates,
     load_config,
     persist_key,
     resolve,
@@ -724,6 +727,91 @@ def _doctor_action(state: MenuState, _stdin: IO[str], out: IO[str]) -> None:
     print(file=out)
 
 
+def _settings_value(_state: MenuState) -> str:
+    return "export / import"
+
+
+def _settings_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
+    """Save the current settings to a file, or load them from one.
+
+    No secret ever passes through this: this layer's config.json holds only
+    timeouts, toggles and the CLI order — nothing a keychain would guard —
+    so :func:`~aicp.config.export_payload` needs no filtering.
+    """
+    print(file=out)
+    print(_t(state.lang, "config_settings_io", "Import/export settings"), file=out)  # the row's own label
+    print(
+        _t(state.lang, "settings_export_q", "Export current settings to file [⏎ to skip]: "),
+        file=out,
+    )
+    target = read_line(stdin)
+    if target:
+        data = export_payload(state.path)
+        if _write_json_private(Path(target), data):
+            print(
+                f"  {GREEN}"
+                + _t(state.lang, "settings_export_done", "✓ wrote %s (%s setting(s))", target, len(data))
+                + RESET,
+                file=out,
+            )
+        else:
+            print(
+                f"  {RED}" + _t(state.lang, "settings_export_failed", "✗ could not write %s", target) + RESET,
+                file=out,
+            )
+        print(file=out)
+        return
+    print(
+        _t(state.lang, "settings_import_q", "Import settings from file [⏎ to skip]: "),
+        file=out,
+    )
+    source = read_line(stdin)
+    if not source:
+        print(file=out)
+        return
+    accepted, skipped = import_updates(_read_json_object(Path(source)))
+    if not accepted:
+        print(
+            f"  {RED}" + _t(state.lang, "settings_import_empty", "✗ nothing importable in %s", source) + RESET,
+            file=out,
+        )
+        print(file=out)
+        return
+    merged = _read_json_object(state.path)
+    merged.update(accepted)
+    if not _write_json_private(state.path, merged):
+        print(
+            f"  {RED}"
+            + _t(state.lang, "settings_import_failed", "✗ could not save imported settings to %s", state.path)
+            + RESET,
+            file=out,
+        )
+        print(file=out)
+        return
+    # Rebuilt from the file we just wrote, exactly like the initial
+    # MenuState.from_settings(resolve()) — so a toggle row an import just
+    # changed repaints correctly instead of showing the pre-import value.
+    refreshed = MenuState.from_settings(resolve())
+    state.do_commit = refreshed.do_commit
+    state.do_push = refreshed.do_push
+    state.lang = refreshed.lang
+    state.chain = refreshed.chain
+    state.update_check = refreshed.update_check
+    state.health = None
+    print(
+        f"  {GREEN}" + _t(state.lang, "settings_import_done", "✓ imported %s setting(s)", len(accepted)) + RESET,
+        file=out,
+    )
+    if skipped:
+        print(
+            f"  {DIM}"
+            + _t(state.lang, "settings_import_skipped", "skipped: %s", ", ".join(sorted(skipped)))
+            + RESET,
+            file=out,
+        )
+    print(file=out)
+
+
 #: The menu, in display order. Append to extend — see the module docstring.
 ROWS: tuple[Row, ...] = (
     Row(
@@ -827,6 +915,18 @@ ROWS: tuple[Row, ...] = (
         value=_doctor_value,
         accent=lambda s: YELLOW if _WARN in _doctor_value(s) else GREEN,
         action=_doctor_action,
+    ),
+    Row(
+        key="",
+        group=None,
+        label=("config_settings_io", "Import/export settings"),
+        help=(
+            "config_help_settings_io",
+            "Save config.json to a file, or load one written by another machine.",
+        ),
+        value=_settings_value,
+        accent=lambda _s: CYAN,
+        action=_settings_action,
     ),
 )
 

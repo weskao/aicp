@@ -31,6 +31,8 @@ import pytest
 from aicp.config import (
     DENYLIST,
     config_path,
+    export_payload,
+    import_updates,
     load_config,
     persist_key,
     resolve,
@@ -527,6 +529,89 @@ def test_load_config_reads_the_file_only(cfg, monkeypatch):
     path = cfg({"AICP_TIMEOUT_BASE": "10"})
     monkeypatch.setenv("AICP_TIMEOUT_BASE", "999")
     assert load_config(path) == {"AICP_TIMEOUT_BASE": "10"}
+
+
+# ── export_payload / import_updates: portable settings, no secrets to filter ─
+
+
+def test_export_payload_is_load_config(tmp_path):
+    """This layer stores no secret, so export is exactly the file reader —
+    a second traversal here is how the two would drift."""
+    path = tmp_path / "src.json"
+    path.write_text(json.dumps({"AICP_DO_COMMIT": "0", "AICP_LANG": "zh-TW"}), encoding="utf-8")
+    assert export_payload(path) == load_config(path)
+
+
+def test_export_payload_omits_denylisted_keys(tmp_path):
+    path = tmp_path / "src.json"
+    path.write_text(
+        json.dumps({"AICP_CONFIG": "/evil", "AICP_LANG": "en"}),
+        encoding="utf-8",
+    )
+    assert export_payload(path) == {"AICP_LANG": "en"}
+
+
+def test_export_payload_keeps_a_key_this_version_does_not_recognize(tmp_path):
+    """Forward-compatible, like :func:`persist_key`: a future knob this
+    build has never heard of is still well-formed data, not noise to drop."""
+    path = tmp_path / "src.json"
+    path.write_text(json.dumps({"AICP_FUTURE_KNOB": "x"}), encoding="utf-8")
+    assert export_payload(path) == {"AICP_FUTURE_KNOB": "x"}
+
+
+def test_import_updates_accepts_valid_keys():
+    accepted, skipped = import_updates({"AICP_DO_COMMIT": "0", "AICP_LANG": "zh-TW"})
+    assert accepted == {"AICP_DO_COMMIT": "0", "AICP_LANG": "zh-TW"}
+    assert skipped == ()
+
+
+def test_import_updates_skips_a_denylisted_key_by_name():
+    accepted, skipped = import_updates({"AICP_CONFIG": "/evil", "AICP_LANG": "en"})
+    assert accepted == {"AICP_LANG": "en"}
+    assert skipped == ("AICP_CONFIG",)
+
+
+def test_import_updates_skips_non_string_values():
+    accepted, skipped = import_updates({"AICP_DO_COMMIT": True})
+    assert accepted == {}
+    assert skipped == ("AICP_DO_COMMIT",)
+
+
+def test_import_updates_skips_values_outside_the_charset():
+    accepted, skipped = import_updates({"AICP_TZ": "$(rm -rf /)"})
+    assert accepted == {}
+    assert skipped == ("AICP_TZ",)
+
+
+def test_import_updates_accepts_a_key_this_version_does_not_recognize():
+    """Forward-compatible on import too, matching :func:`export_payload` and
+    :func:`persist_key`: a well-formed key from a newer build is data, not
+    noise to reject."""
+    accepted, skipped = import_updates({"AICP_FUTURE_KNOB": "x"})
+    assert accepted == {"AICP_FUTURE_KNOB": "x"}
+    assert skipped == ()
+
+
+def test_import_updates_handles_a_mix_of_accepted_and_skipped_keys():
+    accepted, skipped = import_updates(
+        {"AICP_LANG": "zh-TW", "AICP_CONFIG": "/evil", "AICP_TZ": "$(rm -rf /)"}
+    )
+    assert accepted == {"AICP_LANG": "zh-TW"}
+    assert set(skipped) == {"AICP_CONFIG", "AICP_TZ"}
+
+
+def test_export_then_import_round_trips_through_persist(tmp_path):
+    src = tmp_path / "a.json"
+    src.write_text(json.dumps({"AICP_DO_PUSH": "0", "AICP_TZ": "Etc/UTC"}), encoding="utf-8")
+    payload = export_payload(src)
+
+    accepted, skipped = import_updates(payload)
+    dest = tmp_path / "b.json"
+    for key, value in accepted.items():
+        persist_key(key, value, dest)
+
+    assert not skipped
+    assert load_config(dest) == payload
 
 
 # ── migration: a legacy ~/.aicprc is folded in once, and left in place ───────

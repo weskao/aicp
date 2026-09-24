@@ -120,7 +120,7 @@ The whole command surface is two things to remember:
 
 ```sh
 aicp             # commit, then push
-aicp --config    # settings, skills, health check — everything else lives here
+aicp --config    # settings, skills, health check, import/export — everything else lives here
 ```
 
 A plain `aicp` run: checks whether anything is pending (skipping the AI CLI
@@ -136,7 +136,8 @@ same as `aicp --config`.
 
 `aicp --config` is one menu for everything that isn't "commit and push
 right now": which steps run, message language, fallback CLI order, the
-skills install/upgrade view, and a health check.
+skills install/upgrade view, a health check, and — see below — saving or
+loading those settings as a file.
 
 ### Fallback order
 
@@ -388,6 +389,12 @@ A legacy `~/.aicprc` (the pre-JSON `KEY=value` format) is migrated into
 old file is left in place untouched, never deleted or rewritten.
 
 See [`config.example.json`](config.example.json) for a ready-to-copy template.
+
+The **Import/export settings** row of `aicp --config` saves the same JSON
+object to a file you name, or loads one written by another machine — same
+merge/skip rules as above (a denylisted or malformed key is named and left
+out, everything else already in `config.json` is kept). There are no secrets
+in this file to filter: `aicp` stores none.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
