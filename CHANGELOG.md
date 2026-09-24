@@ -1,8 +1,22 @@
+## [0.10.0] - 2026-09-24
+
+### 🚀 Features
+
+- Add update check
+
+### 🐛 Bug Fixes
+
+- **test:** Make only_git PATH work on Windows
+- Update config menu skills and health rows
 ## [0.9.1] - 2026-09-22
 
 ### 🐛 Bug Fixes
 
 - **menu:** Erase parent panel when leaving Agents
+
+### 📚 Documentation
+
+- **changelog:** Release v0.9.1
 
 ### 🧪 Testing
 
