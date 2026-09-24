@@ -160,6 +160,7 @@ def test_the_checker_imports_only_the_stdlib():
     stdlib = {
         "__future__",
         "json",
+        "threading",
         "time",
         "urllib",
         "collections",
@@ -167,3 +168,58 @@ def test_the_checker_imports_only_the_stdlib():
         "pathlib",
     }
     assert imported <= stdlib
+
+
+def test_start_and_collect_finds_an_update(tmp_path):
+    """The background variant of check() must agree with the synchronous one."""
+    started = update_check.start(
+        "aicp-cli",
+        "0.9.1",
+        cache_path=tmp_path / "update-check.json",
+        fetch=lambda *_a: _pypi("0.10.0"),
+    )
+    found = update_check.collect(started)
+    assert found is not None
+    assert found.latest == "0.10.0"
+
+
+def test_start_and_collect_stays_silent_when_current(tmp_path):
+    started = update_check.start(
+        "aicp-cli",
+        "0.9.1",
+        cache_path=tmp_path / "update-check.json",
+        fetch=lambda *_a: _pypi("0.9.1"),
+    )
+    assert update_check.collect(started) is None
+
+
+def test_start_overlaps_with_the_callers_own_work(tmp_path):
+    """The point of start()/collect(): the fetch runs while the caller does other work."""
+    import threading
+    import time as time_mod
+
+    release_fetch = threading.Event()
+
+    def slow_fetch(_dist: str, _timeout: float) -> str:
+        release_fetch.wait(timeout=1)
+        return _pypi("0.10.0")
+
+    started = update_check.start(
+        "aicp-cli", "0.9.1", cache_path=tmp_path / "update-check.json", fetch=slow_fetch
+    )
+    # The caller's own work happens here, concurrently with the fetch.
+    time_mod.sleep(0.05)
+    assert started.thread.is_alive()
+    release_fetch.set()
+    found = update_check.collect(started)
+    assert found is not None
+    assert found.latest == "0.10.0"
+
+
+def test_collect_with_no_started_check_is_silent():
+    assert update_check.collect(None) is None
+
+
+def test_default_ttl_is_short_enough_for_same_day_releases():
+    # Several releases can land in one day: the next one is seen soon, not tomorrow.
+    assert update_check.DEFAULT_TTL <= 3600

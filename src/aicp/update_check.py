@@ -9,6 +9,13 @@
     if found:
         print(f"{found.latest} is available (you have {found.current})")
 
+To overlap the PyPI request with the command's own work instead of paying for
+it at exit, start it early and collect the result at the end:
+
+    started = start("my-dist", current="1.0.0", cache_path=...)
+    ...  # the command's own work
+    found = collect(started)
+
 Nothing here is allowed to raise to the caller: a missing cache, a bad
 payload, or a dead network all become ``None``.
 """
@@ -16,16 +23,28 @@ payload, or a dead network all become ``None``.
 from __future__ import annotations
 
 import json
+import threading
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-__all__ = ["DEFAULT_TIMEOUT", "DEFAULT_TTL", "UpdateAvailable", "check", "fetch_pypi"]
+__all__ = [
+    "DEFAULT_TIMEOUT",
+    "DEFAULT_TTL",
+    "Started",
+    "UpdateAvailable",
+    "check",
+    "collect",
+    "fetch_pypi",
+    "start",
+]
 
-DEFAULT_TTL = 86_400
+#: Short because a project can cut several releases in one day; stays far
+#: under PyPI's rate limits even checked every command.
+DEFAULT_TTL = 600
 DEFAULT_TIMEOUT = 0.8
 
 
@@ -90,6 +109,58 @@ def check(
     if latest_parts is None or latest_parts <= current_parts:
         return None
     return UpdateAvailable(current=current, latest=latest)
+
+
+@dataclass
+class Started:
+    """A background check in flight; pass to :func:`collect` to get its result."""
+
+    thread: threading.Thread
+    _result: list = field(default_factory=list)
+
+
+def start(
+    dist_name: str,
+    current: str,
+    *,
+    cache_path: Path,
+    ttl_seconds: int = DEFAULT_TTL,
+    timeout: float = DEFAULT_TIMEOUT,
+    fetch: Callable[[str, float], str] | None = None,
+) -> Started:
+    """Run :func:`check` on a daemon thread so it overlaps the caller's own work."""
+    result: list = []
+
+    def run() -> None:
+        try:
+            result.append(
+                check(
+                    dist_name,
+                    current,
+                    cache_path=cache_path,
+                    ttl_seconds=ttl_seconds,
+                    timeout=timeout,
+                    fetch=fetch,
+                )
+            )
+        except Exception:  # noqa: BLE001 - a background check must never raise
+            pass
+
+    thread = threading.Thread(target=run, name=f"{dist_name}-update-check", daemon=True)
+    thread.start()
+    return Started(thread=thread, _result=result)
+
+
+def collect(started: Started | None, *, timeout: float = DEFAULT_TIMEOUT) -> UpdateAvailable | None:
+    """Wait for a :func:`start`-ed check and return its result. Never raises."""
+    if started is None:
+        return None
+    try:
+        # Usually already done: it ran alongside the caller's own work.
+        started.thread.join(timeout)
+        return started._result[0] if started._result else None
+    except Exception:  # noqa: BLE001 - a hint must never fail the command
+        return None
 
 
 def _now(now: float | None) -> float:

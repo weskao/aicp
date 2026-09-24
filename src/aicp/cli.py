@@ -698,17 +698,25 @@ def _update_cache_path() -> Path:
     return Path.home() / ".aicp" / "update-check.json"
 
 
-def _maybe_update_hint() -> None:
-    """Print a PyPI upgrade hint on stderr. Never changes the exit code."""
+def _start_update_check() -> update_check.Started | None:
+    """Kick off the PyPI check in the background so it overlaps the command."""
     try:
         settings = config.resolve()
         if not settings.update_check:
-            return
-        found = update_check.check(
+            return None
+        return update_check.start(
             "aicp-cli",
             __version__,
             cache_path=_update_cache_path(),
         )
+    except Exception:  # noqa: BLE001 - a hint must never fail the command
+        return None
+
+
+def _maybe_update_hint(started: update_check.Started | None) -> None:
+    """Print a PyPI upgrade hint on stderr. Never changes the exit code."""
+    try:
+        found = update_check.collect(started)
         if found is None:
             return
         print(
@@ -729,6 +737,7 @@ def _maybe_update_hint() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    started = _start_update_check()
     parser = build_parser()
     raw = sys.argv[1:] if argv is None else argv
     rc = 0
@@ -738,7 +747,7 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as exc:  # --help/--version (0), or a bad flag (1)
         rc = int(exc.code or 0)
         if rc == 0:
-            _maybe_update_hint()
+            _maybe_update_hint(started)
         return rc
 
     try:
@@ -749,7 +758,7 @@ def main(argv: list[str] | None = None) -> int:
             + t("interrupted", "interrupted (Ctrl+C) — aborting, no further steps run")
         )
         rc = runner.ABORT_RC
-    _maybe_update_hint()
+    _maybe_update_hint(started)
     return rc
 
 

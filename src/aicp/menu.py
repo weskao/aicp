@@ -771,7 +771,8 @@ ROWS: tuple[Row, ...] = (
         label=("config_update_check", "Check for updates"),
         help=(
             "config_help_update_check",
-            "On: after each command, hint when a newer aicp-cli exists.",
+            "On: checks PyPI in the background (at most every 10 minutes), "
+            "hints after the command when a newer aicp-cli exists.",
         ),
         value=lambda s: _on_off(s, s.update_check),
         accent=lambda s: GREEN if s.update_check else DIM,
