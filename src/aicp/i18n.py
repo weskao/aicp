@@ -246,7 +246,7 @@ CATALOG: dict[str, str] = {
     "update_skip": "略過",
     "update_skip_detail": "下次執行再問",
     "update_skip_version": "略過到下一版",
-    "update_skip_version_detail": "%s 之後的新版推出前不再詢問",
+    "update_skip_version_detail": "有新版本推出後才會再詢問",
     "update_notes": "版本說明：%s",
     "update_keys": "↑↓ 選擇 · ⏎ 確認 · q 略過",
     "update_failed": "更新沒有完成 — 請自行執行：uv tool upgrade aicp-cli",

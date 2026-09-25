@@ -1130,7 +1130,7 @@ def _update_lines(lang: str, found: update_check.UpdateAvailable, notes_url: str
         (_t(lang, "update_skip", "Skip"), _t(lang, "update_skip_detail", "ask again next run")),
         (
             _t(lang, "update_skip_version", "Skip until next version"),
-            _t(lang, "update_skip_version_detail", "quiet until a release after %s", found.latest),
+            _t(lang, "update_skip_version_detail", "ask again once a newer version ships"),
         ),
     )
     body: list[tuple[str, str]] = []
