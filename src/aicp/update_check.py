@@ -143,7 +143,7 @@ def start(
                     fetch=fetch,
                 )
             )
-        except Exception:  # noqa: BLE001 - a background check must never raise
+        except Exception:  # noqa: BLE001, S110 - a background check must never raise
             pass
 
     thread = threading.Thread(target=run, name=f"{dist_name}-update-check", daemon=True)
