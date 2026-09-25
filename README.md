@@ -84,6 +84,10 @@ one-line hint instead. Turn it off with the **Check for updates** row in
 The mechanism lives in `src/aicp/update_check.py`, stdlib-only, so other
 projects can copy it: `offer(started, ask, cache_path=..., upgrade=[...])`
 acts on the answer, and `ask(found)` is the only part that depends on the UI.
+`fetch_github` covers a tool released as GitHub tags instead of PyPI, and
+`upgrade` can be a callable (`lambda found: [[...], [...]]`) when the
+upgrade takes more than one command — codex-reset-watch's own
+`git+…@vX.Y.Z install` followed by `crw apply-schedule` is one example.
 
 ## Set up skills
 

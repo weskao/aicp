@@ -1,4 +1,5 @@
-"""PyPI update check. Stdlib only — copy this file into other projects.
+"""Update check against PyPI or GitHub releases. Stdlib only — copy this
+file into other projects unchanged; only the UI (``ask``) differs.
 
     from update_check import check
     found = check(
@@ -9,7 +10,11 @@
     if found:
         print(f"{found.latest} is available (you have {found.current})")
 
-To overlap the PyPI request with the command's own work instead of paying for
+A project released as GitHub tags instead of PyPI passes
+``fetch=fetch_github`` and its ``owner/repo`` in place of the dist name;
+``latest`` is then the tag as published (``v1.2.0``).
+
+To overlap the request with the command's own work instead of paying for
 it at exit, start it early and collect the result at the end:
 
     started = start("my-dist", current="1.0.0", cache_path=...)
@@ -22,6 +27,9 @@ UI as a callback — it owns what each answer does, the UI only picks one:
     offer(started, ask, cache_path=..., upgrade=["uv", "tool", "upgrade", "my-dist"])
 
 where ``ask(found)`` returns ``UPDATE_NOW``, ``SKIP`` or ``SKIP_VERSION``.
+When the upgrade depends on the version or takes several steps, pass a
+callable instead: ``upgrade=lambda found: [[...], [...]]`` runs each command
+in order and stops at the first one that fails.
 ``SKIP_VERSION`` is remembered in the cache; a newer release asks again.
 
 Nothing here is allowed to raise to the caller: a missing cache, a bad
@@ -51,6 +59,7 @@ __all__ = [
     "UpdateAvailable",
     "check",
     "collect",
+    "fetch_github",
     "fetch_pypi",
     "offer",
     "skip",
@@ -90,6 +99,19 @@ def fetch_pypi(dist_name: str, timeout: float) -> str:
         return response.read().decode("utf-8")
 
 
+def fetch_github(repo: str, timeout: float) -> str:
+    """GET ``https://api.github.com/repos/<owner/repo>/releases/latest``; raw body."""
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/releases/latest",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"{repo.rsplit('/', 1)[-1]}-update-check",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read().decode("utf-8")
+
+
 def check(
     dist_name: str,
     current: str,
@@ -100,31 +122,25 @@ def check(
     now: float | None = None,
     fetch: Callable[[str, float], str] | None = None,
 ) -> UpdateAvailable | None:
-    """Return an update when PyPI's latest is newer than *current*, else None."""
+    """Return an update when the latest release is newer than *current*, else None."""
     current_parts = _numeric_tuple(current)
     if current_parts is None:
         return None
     stamp = _now(now)
     cached = _load_cache(cache_path)
-    latest: str | None = None
     cached_latest = cached.get("latest")
+    latest = cached_latest if isinstance(cached_latest, str) else None
     checked_at = cached.get("checked_at")
-    fresh = (
-        isinstance(cached_latest, str)
-        and isinstance(checked_at, (int, float))
-        and stamp - float(checked_at) < ttl_seconds
-    )
-    if fresh:
-        latest = cached_latest
-    else:
+    fresh = isinstance(checked_at, (int, float)) and stamp - float(checked_at) < ttl_seconds
+    if not fresh:
         try:
-            body = (fetch or fetch_pypi)(dist_name, timeout)
-            latest = _latest_from_body(body)
+            fetched = _latest_from_body((fetch or fetch_pypi)(dist_name, timeout))
         except (OSError, urllib.error.URLError, TimeoutError, ValueError):
-            latest = cached_latest if isinstance(cached_latest, str) else None
-        else:
-            if latest is not None:
-                _save_cache(cache_path, stamp, latest)
+            fetched = None
+        # A failed fetch is cached too (keeping the old answer), so being
+        # offline costs one timeout per TTL, not one per command.
+        latest = fetched or latest
+        _save_cache(cache_path, stamp, latest)
     if not isinstance(latest, str) or latest == cached.get("skipped"):
         return None
     latest_parts = _numeric_tuple(latest)
@@ -197,14 +213,16 @@ def offer(
     ask: Callable[[UpdateAvailable], str],
     *,
     cache_path: Path,
-    upgrade: Sequence[str],
+    upgrade: Sequence[str] | Callable[[UpdateAvailable], Sequence[Sequence[str]]],
     run: Callable[..., object] = subprocess.run,
 ) -> str | None:
     """Collect *started*, let *ask* pick an answer, then act on it.
 
-    Returns the answer acted on (``UPGRADE_FAILED`` when the upgrade command
-    is missing or exits nonzero), or None when there was nothing to offer.
-    Ctrl+C inside *ask* is ``SKIP``. Never raises.
+    *upgrade* is one command, or a callable building the commands from the
+    found release, run in order. Returns the answer acted on
+    (``UPGRADE_FAILED`` when a command is missing or exits nonzero — the
+    rest are then skipped), or None when there was nothing to offer. Ctrl+C
+    inside *ask* is ``SKIP``. Never raises.
     """
     try:
         found = collect(started)
@@ -217,12 +235,14 @@ def offer(
         if answer == SKIP_VERSION:
             skip(cache_path, found.latest)
         elif answer == UPDATE_NOW:
-            try:
-                done = run(list(upgrade), check=False)
-            except OSError:
-                return UPGRADE_FAILED
-            if getattr(done, "returncode", 1) != 0:
-                return UPGRADE_FAILED
+            steps = upgrade(found) if callable(upgrade) else [upgrade]
+            for step in steps:
+                try:
+                    done = run(list(step), check=False)
+                except OSError:
+                    return UPGRADE_FAILED
+                if getattr(done, "returncode", 1) != 0:
+                    return UPGRADE_FAILED
         return answer
     except Exception:  # noqa: BLE001 - an update offer must never fail the command
         return None
@@ -233,9 +253,9 @@ def _now(now: float | None) -> float:
 
 
 def _numeric_tuple(version: str) -> tuple[int, ...] | None:
-    """Leading dotted integers. ``0.10.0`` > ``0.9.1``. Needs at least X.Y."""
+    """Leading dotted integers. ``0.10.0`` > ``0.9.1``; ``v1.2`` is ``1.2``. Needs at least X.Y."""
     parts: list[int] = []
-    for chunk in version.split("."):
+    for chunk in version.strip().lstrip("vV").split("."):
         digits = ""
         for char in chunk:
             if char.isdigit():
@@ -251,9 +271,13 @@ def _numeric_tuple(version: str) -> tuple[int, ...] | None:
 
 
 def _latest_from_body(body: str) -> str | None:
+    """PyPI's ``info.version``, or a GitHub release's ``tag_name``."""
     data = json.loads(body)
     if not isinstance(data, dict):
         return None
+    tag = data.get("tag_name")
+    if isinstance(tag, str) and tag:
+        return tag
     info = data.get("info")
     if not isinstance(info, dict):
         return None
@@ -271,7 +295,7 @@ def _load_cache(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _save_cache(path: Path, checked_at: float, latest: str) -> None:
+def _save_cache(path: Path, checked_at: float, latest: str | None) -> None:
     data = _load_cache(path)
     data.update(checked_at=checked_at, latest=latest)
     _write_cache(path, data)

@@ -338,3 +338,90 @@ def test_offer_never_raises_when_the_ui_does(tmp_path):
 def test_offer_reads_ctrl_c_in_the_ui_as_skip(tmp_path):
     result, _ = _offer(tmp_path, KeyboardInterrupt())
     assert result == update_check.SKIP
+
+
+# ── GitHub releases + multi-step upgrades (what codex-reset-watch needs) ─────
+
+
+def test_a_github_release_tag_is_read(tmp_path):
+    found = _check(tmp_path, current="0.9.1", fetch=lambda *_a: json.dumps({"tag_name": "v0.10.0"}))
+    assert found == update_check.UpdateAvailable(current="0.9.1", latest="v0.10.0")
+
+
+def test_a_v_prefixed_current_version_compares_numerically(tmp_path):
+    found = _check(tmp_path, current="v0.9.1", latest="0.10.0")
+    assert found is not None
+    assert found.latest == "0.10.0"
+
+
+def test_fetch_github_asks_for_the_latest_release(monkeypatch):
+    seen: list = []
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+        def read(self):
+            return b'{"tag_name": "v1.2.0"}'
+
+    def urlopen(request, timeout):
+        seen.append((request.full_url, timeout))
+        return _Response()
+
+    monkeypatch.setattr(update_check.urllib.request, "urlopen", urlopen)
+    body = update_check.fetch_github("owner/repo", 0.5)
+    assert json.loads(body)["tag_name"] == "v1.2.0"
+    assert seen == [("https://api.github.com/repos/owner/repo/releases/latest", 0.5)]
+
+
+def test_a_failed_fetch_is_not_retried_until_the_ttl(tmp_path):
+    calls: list = []
+
+    def boom(_dist: str, _timeout: float) -> str:
+        calls.append(1)
+        raise OSError("offline")
+
+    _check(tmp_path, fetch=boom, now=1_000.0, ttl=600)
+    _check(tmp_path, fetch=boom, now=1_000.0 + 599, ttl=600)
+    assert calls == [1]
+    _check(tmp_path, fetch=boom, now=1_000.0 + 600, ttl=600)
+    assert calls == [1, 1]
+
+
+def _offer_steps(tmp_path, steps, *, returncodes):
+    ran: list = []
+    codes = iter(returncodes)
+    started = update_check.start(
+        "aicp-cli", "0.9.1", cache_path=tmp_path / "c.json", fetch=lambda *_a: _pypi("0.10.0")
+    )
+    result = update_check.offer(
+        started,
+        lambda _found: update_check.UPDATE_NOW,
+        cache_path=tmp_path / "c.json",
+        upgrade=steps,
+        run=lambda cmd, **_k: ran.append(cmd) or _Done(next(codes)),
+    )
+    return result, ran
+
+
+def test_offer_builds_upgrade_steps_from_the_found_release(tmp_path):
+    result, ran = _offer_steps(
+        tmp_path,
+        lambda found: [["install", found.latest], ["reload"]],
+        returncodes=[0, 0],
+    )
+    assert result == update_check.UPDATE_NOW
+    assert ran == [["install", "0.10.0"], ["reload"]]
+
+
+def test_offer_stops_at_the_first_failed_step(tmp_path):
+    result, ran = _offer_steps(
+        tmp_path,
+        lambda found: [["install", found.latest], ["reload"]],
+        returncodes=[1],
+    )
+    assert result == update_check.UPGRADE_FAILED
+    assert ran == [["install", "0.10.0"]]
