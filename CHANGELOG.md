@@ -1,3 +1,13 @@
+## [0.11.0] - 2026-09-25
+
+### 🚀 Features
+
+- **update-check:** Overlap pypi check with the command's work
+- **config:** Import and export settings
+
+### 🐛 Bug Fixes
+
+- **lint:** Parenthesize implicit string concat, silence S110 on background check
 ## [0.10.0] - 2026-09-24
 
 ### 🚀 Features
@@ -8,6 +18,10 @@
 
 - **test:** Make only_git PATH work on Windows
 - Update config menu skills and health rows
+
+### 📚 Documentation
+
+- **changelog:** Release v0.10.0
 ## [0.9.1] - 2026-09-22
 
 ### 🐛 Bug Fixes
