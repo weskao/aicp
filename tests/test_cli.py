@@ -20,12 +20,13 @@ import ast
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from conftest import rmtree
 
-from aicp import budget, cli, config, gitflow, i18n, runner
+from aicp import budget, cli, config, gitflow, i18n, runner, update_check
 from aicp import notify as notify_mod
 
 # ── local helpers ────────────────────────────────────────────────────────────
@@ -609,6 +610,65 @@ def test_update_hint_does_not_mix_into_json_stdout(
     captured = capsys.readouterr()
     json.loads(captured.out)
     assert "99.0.0 is available" in captured.err
+
+
+def _on_a_terminal(monkeypatch, answer: str) -> list[str]:
+    """Pretend stdin/stderr are a TTY and answer the prompt with *answer*;
+    returns the release-notes URLs the prompt was shown."""
+    shown: list[str] = []
+    monkeypatch.setattr(
+        "aicp.update_check.fetch_pypi",
+        lambda *_a, **_k: json.dumps({"info": {"version": "99.0.0"}}),
+    )
+    monkeypatch.setattr(cli, "is_interactive", lambda *_a: True)
+    monkeypatch.setattr(
+        cli.menu, "update_prompt", lambda _found, notes, **_k: shown.append(notes) or answer
+    )
+    return shown
+
+
+def test_on_a_terminal_the_update_is_asked_instead_of_hinted(
+    run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
+):
+    stub_cli()
+    shown = _on_a_terminal(monkeypatch, update_check.SKIP)
+    repo, _bare = git_repo_synced
+    assert run(repo) == 0
+    assert shown == ["https://github.com/weskao/aicp/releases/tag/v99.0.0"]
+    assert "uv tool upgrade" not in capsys.readouterr().err
+
+
+def test_skip_until_next_version_is_remembered(
+    run, aicprc, git_repo_synced, stub_cli, monkeypatch
+):
+    stub_cli()
+    _on_a_terminal(monkeypatch, update_check.SKIP_VERSION)
+    repo, _bare = git_repo_synced
+    assert run(repo) == 0
+    cache = Path.home() / ".aicp" / "update-check.json"
+    assert json.loads(cache.read_text(encoding="utf-8"))["skipped"] == "99.0.0"
+
+
+def test_a_failed_upgrade_tells_the_user_the_manual_command(
+    run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
+):
+    stub_cli()
+    _on_a_terminal(monkeypatch, update_check.UPDATE_NOW)
+    monkeypatch.setattr(cli, "_UPGRADE", [sys.executable, "-c", "raise SystemExit(3)"])
+    repo, _bare = git_repo_synced
+    assert run(repo) == 0
+    assert "uv tool upgrade aicp-cli" in capsys.readouterr().err
+
+
+def test_a_successful_upgrade_prints_no_warning(
+    run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
+):
+    stub_cli()
+    _on_a_terminal(monkeypatch, update_check.UPDATE_NOW)
+    monkeypatch.setattr(cli, "_UPGRADE", [sys.executable, "-c", "pass"])
+    repo, _bare = git_repo_synced
+    assert run(repo) == 0
+    assert "uv tool upgrade" not in capsys.readouterr().err
 
 
 # ── wiring contracts ─────────────────────────────────────────────────────────

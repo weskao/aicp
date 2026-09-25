@@ -51,7 +51,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from . import __version__, agentcfg, agents, gitflow, i18n, skills
+from . import __version__, agentcfg, agents, gitflow, i18n, skills, update_check
 from ._keyreader import is_interactive, key_session, pending, read_key, read_line
 from ._utils import BLUE, BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW, color_supported
 
@@ -75,7 +75,7 @@ from .config import (
 from .contracts import ROSTER
 from .present import render_panel, width
 
-__all__ = ["ROWS", "MenuState", "Row", "config_menu", "swap_ai"]
+__all__ = ["ROWS", "MenuState", "Row", "config_menu", "swap_ai", "update_prompt"]
 
 _ROSTER_NAMES: tuple[str, ...] = tuple(c.name for c in ROSTER)
 #: What the AI CLI order row puts between two names, and the unit the order
@@ -861,7 +861,7 @@ ROWS: tuple[Row, ...] = (
             "config_help_update_check",
             (
                 "On: checks PyPI in the background (at most every 10 minutes), "
-                "hints after the command when a newer aicp-cli exists."
+                "asks after the command whether to upgrade when a newer aicp-cli exists."
             ),
         ),
         value=lambda s: _on_off(s, s.update_check),
@@ -1116,6 +1116,71 @@ def _write(
         file=out,
     )
     return False
+
+
+#: Update prompt rows, top to bottom — the answers update_check.offer acts on.
+_UPDATE_ANSWERS = (update_check.UPDATE_NOW, update_check.SKIP, update_check.SKIP_VERSION)
+
+
+def _update_lines(lang: str, found: update_check.UpdateAvailable, notes_url: str, selected: int) -> list[str]:
+    """The update prompt, drawn like the Agents sub-panel: ``› N)`` marker,
+    bold highlighted row, dim detail column, key-hint footer."""
+    choices = (
+        (_t(lang, "update_now", "Update now"), "uv tool upgrade aicp-cli"),
+        (_t(lang, "update_skip", "Skip"), _t(lang, "update_skip_detail", "ask again next run")),
+        (
+            _t(lang, "update_skip_version", "Skip until next version"),
+            _t(lang, "update_skip_version_detail", "quiet until a release after %s", found.latest),
+        ),
+    )
+    body: list[tuple[str, str]] = []
+    for i, (name, detail) in enumerate(choices, start=1):
+        marker = "›" if selected == i else " "
+        label = f"{marker} {i}) {name}"
+        if selected == i:
+            label = f"{RESET}{BOLD}{label}{RESET}"
+        body.append((label, f"{DIM}{detail}{RESET}"))
+    notes = [
+        _t(lang, "update_notes", "Release notes: %s", notes_url),
+        f"{DIM}" + _t(lang, "update_keys", "↑↓ select · ⏎ confirm · q skip") + f"{RESET}",
+    ]
+    title = "✨ " + _t(
+        lang, "update_available", "aicp %s is available (you have %s)", found.latest, found.current
+    )
+    return render_panel(body, title, CYAN, notes=notes)
+
+
+def update_prompt(
+    found: update_check.UpdateAvailable,
+    notes_url: str,
+    *,
+    stdin: IO[str],
+    out: IO[str],
+) -> str:
+    """The ``ask`` callback for :func:`aicp.update_check.offer`: returns
+    UPDATE_NOW / SKIP / SKIP_VERSION and does nothing else. q or EOF is SKIP."""
+    lang = i18n.LANGUAGE
+    selected = 1
+    lines = _update_lines(lang, found, notes_url, selected)
+    for line in lines:
+        print(line, file=out)
+    with key_session(stdin, out):
+        while True:
+            key = read_key(stdin, out)
+            if key == "quit":
+                return update_check.SKIP
+            if key == "enter":
+                return _UPDATE_ANSWERS[selected - 1]
+            if key == "up":
+                selected = selected - 1 if selected > 1 else len(_UPDATE_ANSWERS)
+            elif key == "down":
+                selected = selected + 1 if selected < len(_UPDATE_ANSWERS) else 1
+            else:
+                continue
+            out.write(f"\033[{_frame_rows(lines, out)}A\033[J")
+            lines = _update_lines(lang, found, notes_url, selected)
+            for line in lines:
+                print(line, file=out)
 
 
 def config_menu(

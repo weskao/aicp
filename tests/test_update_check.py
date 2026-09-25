@@ -11,6 +11,8 @@ import ast
 import json
 from pathlib import Path
 
+import pytest
+
 from aicp import update_check
 
 
@@ -160,6 +162,7 @@ def test_the_checker_imports_only_the_stdlib():
     stdlib = {
         "__future__",
         "json",
+        "subprocess",
         "threading",
         "time",
         "urllib",
@@ -223,3 +226,115 @@ def test_collect_with_no_started_check_is_silent():
 def test_default_ttl_is_short_enough_for_same_day_releases():
     # Several releases can land in one day: the next one is seen soon, not tomorrow.
     assert update_check.DEFAULT_TTL <= 3600
+
+
+# ── skip + offer: the UI-free half of the update prompt ──────────────────────
+#
+# offer() owns what each answer DOES; the caller's ``ask`` only picks one.
+# Another project swaps the UI by passing a different ``ask``.
+
+
+def test_a_skipped_version_stays_silent(tmp_path):
+    update_check.skip(tmp_path / "update-check.json", "0.10.0")
+    assert _check(tmp_path, latest="0.10.0") is None
+
+
+def test_a_release_newer_than_the_skipped_one_is_reported(tmp_path):
+    update_check.skip(tmp_path / "update-check.json", "0.10.0")
+    found = _check(tmp_path, latest="0.11.0")
+    assert found is not None
+    assert found.latest == "0.11.0"
+
+
+def test_a_refetch_keeps_the_skipped_version(tmp_path):
+    cache = tmp_path / "update-check.json"
+    update_check.skip(cache, "0.10.0")
+    _check(tmp_path, latest="0.10.0")
+    assert json.loads(cache.read_text(encoding="utf-8"))["skipped"] == "0.10.0"
+
+
+def _offer(tmp_path, answer, *, latest="0.10.0", run=None):
+    asked: list = []
+
+    def ask(found):
+        asked.append(found)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    started = update_check.start(
+        "aicp-cli",
+        "0.9.1",
+        cache_path=tmp_path / "update-check.json",
+        fetch=lambda *_a: _pypi(latest),
+    )
+    result = update_check.offer(
+        started,
+        ask,
+        cache_path=tmp_path / "update-check.json",
+        upgrade=["uv", "tool", "upgrade", "aicp-cli"],
+        run=run or (lambda *_a, **_k: pytest.fail("upgrade must not run")),
+    )
+    return result, asked
+
+
+class _Done:
+    def __init__(self, returncode: int) -> None:
+        self.returncode = returncode
+
+
+def test_offer_does_not_ask_when_nothing_is_newer(tmp_path):
+    result, asked = _offer(tmp_path, update_check.UPDATE_NOW, latest="0.9.1")
+    assert result is None
+    assert asked == []
+
+
+def test_offer_asks_with_the_found_release(tmp_path):
+    _result, asked = _offer(tmp_path, update_check.SKIP)
+    assert asked == [update_check.UpdateAvailable(current="0.9.1", latest="0.10.0")]
+
+
+def test_offer_update_now_runs_the_upgrade_command(tmp_path):
+    ran: list = []
+    result, _ = _offer(
+        tmp_path,
+        update_check.UPDATE_NOW,
+        run=lambda cmd, **_k: ran.append(cmd) or _Done(0),
+    )
+    assert result == update_check.UPDATE_NOW
+    assert ran == [["uv", "tool", "upgrade", "aicp-cli"]]
+
+
+def test_offer_reports_an_upgrade_that_exits_nonzero(tmp_path):
+    result, _ = _offer(tmp_path, update_check.UPDATE_NOW, run=lambda *_a, **_k: _Done(2))
+    assert result == update_check.UPGRADE_FAILED
+
+
+def test_offer_reports_a_missing_upgrade_tool(tmp_path):
+    def missing(*_a, **_k):
+        raise FileNotFoundError("uv")
+
+    result, _ = _offer(tmp_path, update_check.UPDATE_NOW, run=missing)
+    assert result == update_check.UPGRADE_FAILED
+
+
+def test_offer_skip_leaves_the_next_run_asking(tmp_path):
+    result, _ = _offer(tmp_path, update_check.SKIP)
+    assert result == update_check.SKIP
+    assert _check(tmp_path, latest="0.10.0") is not None
+
+
+def test_offer_skip_version_silences_that_version(tmp_path):
+    result, _ = _offer(tmp_path, update_check.SKIP_VERSION)
+    assert result == update_check.SKIP_VERSION
+    assert _check(tmp_path, latest="0.10.0") is None
+
+
+def test_offer_never_raises_when_the_ui_does(tmp_path):
+    result, _ = _offer(tmp_path, RuntimeError("broken terminal"))
+    assert result is None
+
+
+def test_offer_reads_ctrl_c_in_the_ui_as_skip(tmp_path):
+    result, _ = _offer(tmp_path, KeyboardInterrupt())
+    assert result == update_check.SKIP

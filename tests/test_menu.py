@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from aicp import menu as menu_module
+from aicp import update_check
 from aicp._keyreader import is_interactive, key_session, read_key
 from aicp._utils import BOLD, CYAN, GREEN
 from aicp.config import resolve
@@ -495,3 +496,41 @@ def test_a_non_tty_key_session_is_a_no_op():
     """CI has no terminal to put into cbreak, and must not fail trying."""
     with key_session(io.StringIO(), io.StringIO()) as typed, typed():
         pass
+
+
+# ── update prompt (the UI half; update_check.offer acts on the answer) ───────
+
+_FOUND = update_check.UpdateAvailable(current="0.11.0", latest="0.12.0")
+_NOTES = "https://example.com/releases/tag/v0.12.0"
+
+
+def _pick(keys: str) -> tuple[str, str]:
+    out = io.StringIO()
+    answer = menu_module.update_prompt(_FOUND, _NOTES, stdin=io.StringIO(keys), out=out)
+    return answer, out.getvalue()
+
+
+def test_update_prompt_enter_on_the_first_row_is_update_now():
+    assert _pick("enter\n")[0] == update_check.UPDATE_NOW
+
+
+def test_update_prompt_down_moves_to_skip():
+    assert _pick("down\nenter\n")[0] == update_check.SKIP
+
+
+def test_update_prompt_up_wraps_to_skip_version():
+    assert _pick("up\nenter\n")[0] == update_check.SKIP_VERSION
+
+
+def test_update_prompt_backing_out_is_skip():
+    assert _pick("q\n")[0] == update_check.SKIP
+    assert _pick("")[0] == update_check.SKIP
+
+
+def test_update_prompt_shows_versions_notes_and_the_projects_cursor():
+    text = _pick("enter\n")[1]
+    assert "0.12.0 is available (you have 0.11.0)" in text
+    assert _NOTES in text
+    assert "› 1) Update now" in text
+    assert "  2) Skip" in text
+    assert "  3) Skip until next version" in text

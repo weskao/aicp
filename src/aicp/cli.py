@@ -50,6 +50,7 @@ from . import (
     skills,
     update_check,
 )
+from ._keyreader import is_interactive
 from ._utils import BLUE, BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW, have
 from .agents import executable
 from .contracts import ROSTER
@@ -713,27 +714,36 @@ def _start_update_check() -> update_check.Started | None:
         return None
 
 
-def _maybe_update_hint(started: update_check.Started | None) -> None:
-    """Print a PyPI upgrade hint on stderr. Never changes the exit code."""
-    try:
-        found = update_check.collect(started)
-        if found is None:
-            return
+#: What "Update now" runs; the release page each prompt links to.
+_UPGRADE = ["uv", "tool", "upgrade", "aicp-cli"]
+_RELEASE_NOTES = "https://github.com/weskao/aicp/releases/tag/v%s"
+
+
+def _hint_update(found: update_check.UpdateAvailable) -> str:
+    """The ``ask`` off a terminal (CI, pipes): a one-shot hint, never a block."""
+    print(
+        t("update_available", "aicp %s is available (you have %s)", found.latest, found.current),
+        file=sys.stderr,
+    )
+    print(t("update_command", "  uv tool upgrade aicp-cli"), file=sys.stderr)
+    return update_check.SKIP
+
+
+def _ask_update(found: update_check.UpdateAvailable) -> str:
+    return menu.update_prompt(found, _RELEASE_NOTES % found.latest, stdin=sys.stdin, out=sys.stderr)
+
+
+def _offer_update(started: update_check.Started | None) -> None:
+    """After the command: ask (or hint) about a newer release. Never changes
+    the exit code — :func:`update_check.offer` never raises."""
+    ask = _ask_update if is_interactive(sys.stdin, sys.stderr) else _hint_update
+    answer = update_check.offer(started, ask, cache_path=_update_cache_path(), upgrade=_UPGRADE)
+    if answer == update_check.UPGRADE_FAILED:
         print(
-            t(
-                "update_available",
-                "aicp %s is available (you have %s)",
-                found.latest,
-                found.current,
-            ),
+            f"{YELLOW}⚠{RESET} "
+            + t("update_failed", "upgrade did not finish — run it yourself: uv tool upgrade aicp-cli"),
             file=sys.stderr,
         )
-        print(
-            t("update_command", "  uv tool upgrade aicp-cli"),
-            file=sys.stderr,
-        )
-    except Exception:  # noqa: BLE001 - a hint must never fail the command
-        return
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -747,7 +757,7 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as exc:  # --help/--version (0), or a bad flag (1)
         rc = int(exc.code or 0)
         if rc == 0:
-            _maybe_update_hint(started)
+            _offer_update(started)
         return rc
 
     try:
@@ -758,7 +768,7 @@ def main(argv: list[str] | None = None) -> int:
             + t("interrupted", "interrupted (Ctrl+C) — aborting, no further steps run")
         )
         rc = runner.ABORT_RC
-    _maybe_update_hint(started)
+    _offer_update(started)
     return rc
 
 

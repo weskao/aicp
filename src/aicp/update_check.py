@@ -16,6 +16,14 @@ it at exit, start it early and collect the result at the end:
     ...  # the command's own work
     found = collect(started)
 
+To ask the user what to do instead of only hinting, hand :func:`offer` the
+UI as a callback — it owns what each answer does, the UI only picks one:
+
+    offer(started, ask, cache_path=..., upgrade=["uv", "tool", "upgrade", "my-dist"])
+
+where ``ask(found)`` returns ``UPDATE_NOW``, ``SKIP`` or ``SKIP_VERSION``.
+``SKIP_VERSION`` is remembered in the cache; a newer release asks again.
+
 Nothing here is allowed to raise to the caller: a missing cache, a bad
 payload, or a dead network all become ``None``.
 """
@@ -23,22 +31,29 @@ payload, or a dead network all become ``None``.
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 __all__ = [
     "DEFAULT_TIMEOUT",
     "DEFAULT_TTL",
+    "SKIP",
+    "SKIP_VERSION",
+    "UPDATE_NOW",
+    "UPGRADE_FAILED",
     "Started",
     "UpdateAvailable",
     "check",
     "collect",
     "fetch_pypi",
+    "offer",
+    "skip",
     "start",
 ]
 
@@ -46,6 +61,13 @@ __all__ = [
 #: under PyPI's rate limits even checked every command.
 DEFAULT_TTL = 600
 DEFAULT_TIMEOUT = 0.8
+
+#: Answers an ``ask`` callback returns to :func:`offer`.
+UPDATE_NOW = "update-now"
+SKIP = "skip"
+SKIP_VERSION = "skip-version"
+#: What :func:`offer` returns when UPDATE_NOW's command could not run or failed.
+UPGRADE_FAILED = "upgrade-failed"
 
 
 @dataclass(frozen=True)
@@ -103,7 +125,7 @@ def check(
         else:
             if latest is not None:
                 _save_cache(cache_path, stamp, latest)
-    if not isinstance(latest, str):
+    if not isinstance(latest, str) or latest == cached.get("skipped"):
         return None
     latest_parts = _numeric_tuple(latest)
     if latest_parts is None or latest_parts <= current_parts:
@@ -163,6 +185,49 @@ def collect(started: Started | None, *, timeout: float = DEFAULT_TIMEOUT) -> Upd
         return None
 
 
+def skip(cache_path: Path, version: str) -> None:
+    """Stop reporting *version*; a newer release is reported again. Never raises."""
+    data = _load_cache(cache_path)
+    data["skipped"] = version
+    _write_cache(cache_path, data)
+
+
+def offer(
+    started: Started | None,
+    ask: Callable[[UpdateAvailable], str],
+    *,
+    cache_path: Path,
+    upgrade: Sequence[str],
+    run: Callable[..., object] = subprocess.run,
+) -> str | None:
+    """Collect *started*, let *ask* pick an answer, then act on it.
+
+    Returns the answer acted on (``UPGRADE_FAILED`` when the upgrade command
+    is missing or exits nonzero), or None when there was nothing to offer.
+    Ctrl+C inside *ask* is ``SKIP``. Never raises.
+    """
+    try:
+        found = collect(started)
+        if found is None:
+            return None
+        try:
+            answer = ask(found)
+        except KeyboardInterrupt:
+            return SKIP
+        if answer == SKIP_VERSION:
+            skip(cache_path, found.latest)
+        elif answer == UPDATE_NOW:
+            try:
+                done = run(list(upgrade), check=False)
+            except OSError:
+                return UPGRADE_FAILED
+            if getattr(done, "returncode", 1) != 0:
+                return UPGRADE_FAILED
+        return answer
+    except Exception:  # noqa: BLE001 - an update offer must never fail the command
+        return None
+
+
 def _now(now: float | None) -> float:
     return time.time() if now is None else now
 
@@ -207,11 +272,14 @@ def _load_cache(path: Path) -> dict:
 
 
 def _save_cache(path: Path, checked_at: float, latest: str) -> None:
+    data = _load_cache(path)
+    data.update(checked_at=checked_at, latest=latest)
+    _write_cache(path, data)
+
+
+def _write_cache(path: Path, data: dict) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps({"checked_at": checked_at, "latest": latest}) + "\n",
-            encoding="utf-8",
-        )
+        path.write_text(json.dumps(data) + "\n", encoding="utf-8")
     except OSError:
         return
