@@ -1,3 +1,13 @@
+## [0.12.0] - 2026-09-25
+
+### 🚀 Features
+
+- **update-check:** Prompt to upgrade instead of just hinting
+- **update:** Support GitHub tags and multi-step upgrades
+
+### 🐛 Bug Fixes
+
+- **update:** Stop naming a specific version in skip-until wording
 ## [0.11.0] - 2026-09-25
 
 ### 🚀 Features
@@ -8,6 +18,10 @@
 ### 🐛 Bug Fixes
 
 - **lint:** Parenthesize implicit string concat, silence S110 on background check
+
+### 📚 Documentation
+
+- **changelog:** Release v0.11.0
 ## [0.10.0] - 2026-09-24
 
 ### 🚀 Features
