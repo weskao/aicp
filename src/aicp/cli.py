@@ -32,7 +32,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import NoReturn
@@ -592,7 +591,6 @@ def _report(
 
 
 def _flow(settings: config.Settings, *, verbose: bool) -> int:
-    started = time.monotonic()
     chain = settings.cli_chain
     excluded: set[str] = set()
 
@@ -649,7 +647,9 @@ def _flow(settings: config.Settings, *, verbose: bool) -> int:
         branch,
         commit_handler=commit_result.winner if commit_result is not None else None,
         push_handler=push_result.winner if isinstance(push_result, runner.StepResult) else None,
-        total_elapsed=time.monotonic() - started,
+        total_elapsed=sum(
+            r.elapsed for r in (commit_result, push_result) if isinstance(r, runner.StepResult)
+        ),
     )
 
 

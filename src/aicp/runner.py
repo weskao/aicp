@@ -42,7 +42,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Generator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -93,6 +93,9 @@ class StepResult:
     rc: int
     winner: str | None = None
     quota_clis: tuple[str, ...] = ()
+    #: Sum of the per-CLI times printed for this step, each rounded the way it
+    #: was displayed, so the RESULT total adds up to exactly what was shown.
+    elapsed: float = field(default=0.0, compare=False)
 
 # Above this, a budget is treated as "no timeout" rather than a deadline. A
 # budget is only ever a digit string out of the environment or .aicprc, so it
@@ -424,6 +427,7 @@ def run_step(
     """
     out = stream if stream is not None else sys.stdout
     quota_clis: list[str] = []
+    spent = 0.0
     with _capture_file() as (capture, capture_path):
         for cli in chain:
             argv = invoke_argv(cli, prompt)
@@ -481,6 +485,7 @@ def run_step(
 
             elapsed = time.monotonic() - started
             clock = format_elapsed(elapsed)
+            spent += round(elapsed, 1)
             output = _captured_text(capture)
             outcome = classify(cli, rc, timed_out=timed_out, output=output)
             timing.append(cli, prompt, int(elapsed), outcome, rc)
@@ -488,11 +493,11 @@ def run_step(
             if outcome == "abort":
                 note = t("step_signal_note", "signal %s", rc - 128)
                 print(f"  {YELLOW}⚠{RESET} {CYAN}{cli}{RESET}{DIM}  {clock} · {note}{RESET}", file=out)
-                return StepResult(ABORT_RC, quota_clis=tuple(quota_clis))
+                return StepResult(ABORT_RC, quota_clis=tuple(quota_clis), elapsed=spent)
 
             if outcome == "ok":
                 print(f"  {GREEN}✓{RESET} {CYAN}{cli}{RESET}{DIM}  {clock}{RESET}", file=out)
-                return StepResult(0, winner=cli, quota_clis=tuple(quota_clis))
+                return StepResult(0, winner=cli, quota_clis=tuple(quota_clis), elapsed=spent)
 
             if outcome == "timeout":
                 note = t("step_timeout_note", "timed out (> %ss)", allowed.seconds)
@@ -538,4 +543,4 @@ def run_step(
             _replay(capture, out)
 
         print(f"{RED}" + t("no_cli_for_step", "  ✗ no AI CLI could run this step") + RESET, file=out)
-        return StepResult(1, quota_clis=tuple(quota_clis))
+        return StepResult(1, quota_clis=tuple(quota_clis), elapsed=spent)

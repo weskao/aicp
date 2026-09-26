@@ -404,6 +404,20 @@ def test_run_step_exposes_the_winner(stub_cli):
     assert result == runner.StepResult(rc=0, winner="agy", quota_clis=())
 
 
+def test_run_step_elapsed_sums_every_attempt_not_just_the_winner(monkeypatch, stub_cli):
+    """StepResult.elapsed must add up the failed copilot attempt plus the
+    winning agy attempt — the RESULT panel's total time is built from this,
+    and a total that only counted the winner would undercount every fallback."""
+    stub_cli(per_cli={"copilot": 1})
+    ticks = iter([100.0, 112.34, 200.0, 205.0])  # copilot: 12.34s, agy: 5.0s
+    monkeypatch.setattr(runner.time, "monotonic", lambda: next(ticks))
+
+    result = runner.run_step("/commit", ("copilot", "agy"), stream=io.StringIO())
+
+    assert result == runner.StepResult(rc=0, winner="agy", quota_clis=())
+    assert result.elapsed == pytest.approx(12.3 + 5.0)
+
+
 @POSIX_ONLY
 def test_quota_falls_through_and_is_returned_and_logged(sh_stub, timing_log):
     sh_stub("codex", "echo usage_limit_reached\nexit 1\n")

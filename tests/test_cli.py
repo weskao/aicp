@@ -333,6 +333,22 @@ def test_result_presents_the_winning_handler_for_each_attempt(
     assert out.count("Commit handler") == 1
 
 
+def test_total_time_is_the_sum_of_the_step_times(
+    run, aicprc, repo_ahead, monkeypatch, stub_cli, capsys
+):
+    """Total must add up to the per-CLI times shown, not the wall clock
+    (which also counts precheck and the final fetch)."""
+    stub_cli()
+
+    def fake_run_step(prompt, *_args, **_kwargs):
+        return runner.StepResult(0, winner="x", elapsed=40.5 if prompt == "/commit" else 26.9)
+
+    monkeypatch.setattr(cli.runner, "run_step", fake_run_step)
+    run(repo_ahead)
+
+    assert "1m 07.4s" in capsys.readouterr().out
+
+
 # ── the git-verified RESULT table ────────────────────────────────────────────
 
 
