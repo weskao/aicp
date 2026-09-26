@@ -15,6 +15,7 @@ whatever bot token happens to be exported on the machine running pytest.
 from __future__ import annotations
 
 import telegram_kit
+
 from aicp.notify import notify
 
 # ── the send path ────────────────────────────────────────────────────────────
