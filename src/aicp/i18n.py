@@ -118,6 +118,7 @@ CATALOG: dict[str, str] = {
     "result_status": "狀態",
     "commit_handler": "Commit 處理 CLI",
     "push_handler": "Push 處理 CLI",
+    "result_total_time": "總處理時間",
     "panel_value_header": "值",
     "panel_repo": "repo",
     "panel_branch": "分支",

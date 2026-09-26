@@ -15,6 +15,21 @@ from aicp import present
 # ── spinner ───────────────────────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (0, "0.0s"),
+        (12.34, "12.3s"),
+        (59.96, "1m 00.0s"),
+        (65.3, "1m 05.3s"),
+        (3599.96, "1h 00m 00.0s"),
+        (3723.4, "1h 02m 03.4s"),
+    ],
+)
+def test_format_elapsed_cascades_units(seconds, expected):
+    assert present.format_elapsed(seconds) == expected
+
+
 def test_spinner_run_relays_success():
     result = present.spinner_run("t", [sys.executable, "-c", "import sys; sys.exit(0)"])
     assert result.returncode == 0

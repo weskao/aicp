@@ -32,6 +32,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import NoReturn
@@ -499,6 +500,7 @@ def _report(
     *,
     commit_handler: str | None,
     push_handler: str | None,
+    total_elapsed: float,
 ) -> int:
     """Print the git-verified RESULT table and decide the exit code."""
     if summary.fetch_note:
@@ -509,6 +511,7 @@ def _report(
                 *summary.rows(),
                 (t("commit_handler", "Commit handler"), commit_handler or "—"),
                 (t("push_handler", "Push handler"), push_handler or "—"),
+                (t("result_total_time", "Total time"), present.format_elapsed(total_elapsed)),
             ],
             t("result_title", "RESULT"),
         )
@@ -589,6 +592,7 @@ def _report(
 
 
 def _flow(settings: config.Settings, *, verbose: bool) -> int:
+    started = time.monotonic()
     chain = settings.cli_chain
     excluded: set[str] = set()
 
@@ -645,6 +649,7 @@ def _flow(settings: config.Settings, *, verbose: bool) -> int:
         branch,
         commit_handler=commit_result.winner if commit_result is not None else None,
         push_handler=push_result.winner if isinstance(push_result, runner.StepResult) else None,
+        total_elapsed=time.monotonic() - started,
     )
 
 

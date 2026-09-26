@@ -63,7 +63,7 @@ from aicp._utils import (
 from aicp.agents import AGENTS
 from aicp.contracts import NotifyFn
 from aicp.i18n import t
-from aicp.present import Spinner
+from aicp.present import Spinner, format_elapsed
 
 __all__ = [
     "ABORT_RC",
@@ -479,23 +479,24 @@ def run_step(
                     stream_thread.join()
                 spinner.stop()
 
-            elapsed = int(time.monotonic() - started)
+            elapsed = time.monotonic() - started
+            clock = format_elapsed(elapsed)
             output = _captured_text(capture)
             outcome = classify(cli, rc, timed_out=timed_out, output=output)
-            timing.append(cli, prompt, elapsed, outcome, rc)
+            timing.append(cli, prompt, int(elapsed), outcome, rc)
 
             if outcome == "abort":
                 note = t("step_signal_note", "signal %s", rc - 128)
-                print(f"  {YELLOW}⚠{RESET} {CYAN}{cli}{RESET}{DIM}  {elapsed}s · {note}{RESET}", file=out)
+                print(f"  {YELLOW}⚠{RESET} {CYAN}{cli}{RESET}{DIM}  {clock} · {note}{RESET}", file=out)
                 return StepResult(ABORT_RC, quota_clis=tuple(quota_clis))
 
             if outcome == "ok":
-                print(f"  {GREEN}✓{RESET} {CYAN}{cli}{RESET}{DIM}  {elapsed}s{RESET}", file=out)
+                print(f"  {GREEN}✓{RESET} {CYAN}{cli}{RESET}{DIM}  {clock}{RESET}", file=out)
                 return StepResult(0, winner=cli, quota_clis=tuple(quota_clis))
 
             if outcome == "timeout":
                 note = t("step_timeout_note", "timed out (> %ss)", allowed.seconds)
-                print(f"  {YELLOW}⏱{RESET} {CYAN}{cli}{RESET}{DIM}  {elapsed}s · {note}{RESET}", file=out)
+                print(f"  {YELLOW}⏱{RESET} {CYAN}{cli}{RESET}{DIM}  {clock} · {note}{RESET}", file=out)
                 # A notifier that fails must never abort a run that would
                 # otherwise commit and push: the zsh `_aicp_notify` returns 1
                 # at worst (it prints "(telegram unavailable)" and carries on)
@@ -518,7 +519,7 @@ def run_step(
                 quota_clis.append(cli)
                 quota.record(cli)
                 note = t("step_quota_note", "quota/rate-limit exhausted — skipping for this run")
-                print(f"  {YELLOW}⚠{RESET} {CYAN}{cli}{RESET}{DIM}  {elapsed}s · {note}{RESET}", file=out)
+                print(f"  {YELLOW}⚠{RESET} {CYAN}{cli}{RESET}{DIM}  {clock} · {note}{RESET}", file=out)
                 _notify_quietly(
                     notify,
                     t(
@@ -532,7 +533,7 @@ def run_step(
                 )
             else:
                 note = t("step_exit_note", "exit %s", rc)
-                print(f"  {RED}✗{RESET} {CYAN}{cli}{RESET}{DIM}  {elapsed}s · {note}{RESET}", file=out)
+                print(f"  {RED}✗{RESET} {CYAN}{cli}{RESET}{DIM}  {clock} · {note}{RESET}", file=out)
 
             _replay(capture, out)
 

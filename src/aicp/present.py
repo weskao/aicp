@@ -18,6 +18,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import unicodedata
 from collections.abc import Sequence
 from pathlib import Path
@@ -27,6 +28,7 @@ from .i18n import t
 
 __all__ = [
     "Spinner",
+    "format_elapsed",
     "render",
     "render_panel",
     "render_table",
@@ -35,6 +37,23 @@ __all__ = [
     "spinner_run",
     "width",
 ]
+
+
+def format_elapsed(seconds: float) -> str:
+    """*seconds* as ``12.3s`` / ``1m 05.3s`` / ``1h 02m 05.3s``.
+
+    Cascades up only as far as needed — the unit never appears until its
+    predecessor overflows — and stops at hours. One decimal place throughout,
+    so a live-refreshed caller and the final printed total read as the same
+    clock rather than a rounded int vs. a precise float.
+    """
+    minutes, secs = divmod(round(seconds, 1), 60)
+    if minutes < 1:
+        return f"{secs:.1f}s"
+    hours, minutes = divmod(int(minutes), 60)
+    if hours < 1:
+        return f"{minutes}m {secs:04.1f}s"
+    return f"{hours}h {minutes:02d}m {secs:04.1f}s"
 
 # ── spinner (lib/spinner.sh port) ────────────────────────────────────────────
 
@@ -92,6 +111,7 @@ class Spinner:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._started = 0.0
 
     @property
     def enabled(self) -> bool:
@@ -108,7 +128,8 @@ class Spinner:
             with self._lock:
                 message = self._message
             frame = self._frames[i % n]
-            self._stream.write(f"\r{_SPINNER_COLOR}{frame}{RESET} {message}\033[K")
+            clock = format_elapsed(time.monotonic() - self._started)
+            self._stream.write(f"\r{_SPINNER_COLOR}{frame}{RESET} {message} {DIM}{clock}{RESET}\033[K")
             self._stream.flush()
             i += 1
             self._stop_event.wait(_SPINNER_INTERVAL)
@@ -119,6 +140,7 @@ class Spinner:
         if not self._enabled:
             return
         self.stop()  # matches spinner_start's own leading spinner_stop
+        self._started = time.monotonic()
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
