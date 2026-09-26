@@ -38,7 +38,7 @@ jobs:
       - name: Validate release wheel
         run: |
           uv venv .release-venv
-          uv pip install --python .release-venv/bin/python --no-index dist/*.whl
+          uv pip install --python .release-venv/bin/python dist/*.whl
           .release-venv/bin/aicp --help
           # The wheel must report the version being tagged. This catches both a
           # tag/pyproject mismatch and the silent `0+unknown` that appears when
