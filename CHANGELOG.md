@@ -1,3 +1,20 @@
+## [0.13.0] - 2026-09-26
+
+### 🚀 Features
+
+- Show live and total elapsed processing time
+
+### 🐛 Bug Fixes
+
+- Sum elapsed totals
+
+### 🚜 Refactor
+
+- **notify:** [**breaking**] Send via telegram_kit instead of vendored sender
+
+### 🎨 Styling
+
+- **test:** Sort imports in test_notify
 ## [0.12.0] - 2026-09-25
 
 ### 🚀 Features
