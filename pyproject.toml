@@ -8,7 +8,9 @@ readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Wes Kao" }]
 license = { text = "MIT" }
-dependencies = []
+dependencies = [
+    "telegram-kit",
+]
 
 [project.scripts]
 aicp = "aicp.cli:main"
@@ -43,3 +45,6 @@ dev = [
 # skills/ is vendored, byte-identical to its ~/.claude source (see
 # contracts.py's SKILL_VERSION_* docstring) — never linted or reformatted.
 extend-exclude = ["skills"]
+
+[tool.uv.sources]
+telegram-kit = { git = "https://github.com/weskao/telegram-kit", rev = "v0.1.0" }

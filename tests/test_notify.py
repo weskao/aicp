@@ -1,6 +1,6 @@
 """The injected notifier: Telegram when it is there, a printed line when not.
 
-Sends straight to the Bot API through ``aicp.telegram_notify`` — no
+Sends straight to the Bot API through ``telegram_kit`` — no
 ``~/.claude`` checkout, no shell script, no subprocess. Credentials
 (``TG_BOT_TOKEN``/``TG_CHAT_ID``) come from the environment ONLY — never from
 ``.aicprc``, a checked-in, shareable file — and no failure may ever reach the
@@ -14,7 +14,7 @@ whatever bot token happens to be exported on the machine running pytest.
 
 from __future__ import annotations
 
-from aicp import telegram_notify as telegram_notify_module
+import telegram_kit
 from aicp.notify import notify
 
 # ── the send path ────────────────────────────────────────────────────────────
@@ -27,8 +27,8 @@ def test_sends_through_the_bot_api_when_credentials_are_present(
     monkeypatch.setenv("TG_CHAT_ID", "42")
     calls = []
     monkeypatch.setattr(
-        telegram_notify_module,
-        "send_telegram",
+        telegram_kit,
+        "send_message",
         lambda token, chat_id, text, **kw: calls.append((token, chat_id, text)) or True,
     )
 
@@ -41,7 +41,7 @@ def test_sends_through_the_bot_api_when_credentials_are_present(
 def test_a_failed_send_degrades_to_the_printed_line(monkeypatch, capsys) -> None:
     monkeypatch.setenv("TG_BOT_TOKEN", "tok")
     monkeypatch.setenv("TG_CHAT_ID", "42")
-    monkeypatch.setattr(telegram_notify_module, "send_telegram", lambda *a, **kw: False)
+    monkeypatch.setattr(telegram_kit, "send_message", lambda *a, **kw: False)
 
     notify("hello")
 
@@ -53,8 +53,8 @@ def test_credentials_are_read_fresh_each_call(monkeypatch) -> None:
     would otherwise be ignored."""
     seen = []
     monkeypatch.setattr(
-        telegram_notify_module,
-        "send_telegram",
+        telegram_kit,
+        "send_message",
         lambda token, chat_id, text, **kw: seen.append(token) or True,
     )
 
@@ -74,7 +74,7 @@ def test_missing_credentials_degrade_to_a_printed_line_without_any_network_call(
     monkeypatch, capsys
 ) -> None:
     """No TG_BOT_TOKEN/TG_CHAT_ID (the pinned_environment default): the real
-    ``telegram_notify.send_telegram`` short-circuits on missing credentials,
+    ``telegram_kit.send_message`` short-circuits on missing credentials,
     so this never even attempts a connection."""
 
     def _boom(*a, **kw):

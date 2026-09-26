@@ -1,9 +1,9 @@
 """The injected notifier — Telegram when it is there, a printed line when not.
 
-Sends straight to the Telegram Bot API via :mod:`aicp.telegram_notify`
-(stdlib HTTP, zero dependencies) — no ``~/.claude`` checkout, no shell
-script, no subprocess. aicp keeps working for anyone who only has this repo;
-without credentials it just prints the line instead of sending it.
+Sends straight to the Telegram Bot API via :mod:`telegram_kit` (stdlib HTTP,
+zero project dependencies) — no ``~/.claude`` checkout, no shell script, no
+subprocess. aicp keeps working for anyone who only has this repo; without
+credentials it just prints the line instead of sending it.
 
 :func:`notify` is the real implementation behind ``contracts.NotifyFn`` — it
 is passed INTO the runner at the CLI entry point, never imported by it, so
@@ -22,9 +22,8 @@ would be a leaked secret the moment that file is synced or committed.
 
 from __future__ import annotations
 
-import os
+import telegram_kit
 
-from . import telegram_notify
 from ._utils import DIM, RESET
 from .i18n import t
 
@@ -32,9 +31,8 @@ __all__ = ["notify"]
 
 
 def _send(message: str) -> bool:
-    token = os.environ.get("TG_BOT_TOKEN")
-    chat_id = os.environ.get("TG_CHAT_ID")
-    return telegram_notify.send_telegram(token or "", chat_id or "", message)
+    token, chat_id = telegram_kit.resolve_credentials("", "")
+    return telegram_kit.send_message(token, chat_id, message)
 
 
 def notify(message: str) -> None:

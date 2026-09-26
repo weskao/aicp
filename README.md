@@ -429,7 +429,7 @@ in this file to filter: `aicp` stores none.
 | `AICP_SKIP_SECRET_SCAN` | *(unset)* | `1` bypasses the pre-commit secret scan for one run — the documented escape for a false positive. |
 | `AICP_CONFIG` | `~/.aicp/config.json` | Which file this loader reads. Environment-variable only — a file can't rename itself. |
 | `AICP_TIMING_LOG` | `~/.aicp/timing.log` | Where per-CLI timing rows are appended (rotated at 5 MB, 5 kept). **Environment-variable only** — refused if set in `config.json`. |
-| `TG_BOT_TOKEN` | *(unset)* | Telegram bot token used to send the end-of-run notification — sent directly to the Bot API via stdlib HTTP (`aicp.telegram_notify`), no external script or project required. Same name `~/.claude/scripts/tg-send.sh` already uses, so an existing setup carries over. Not part of the `AICP_*` config system at all (see below), so it can only ever be a real environment variable. |
+| `TG_BOT_TOKEN` | *(unset)* | Telegram bot token used to send the end-of-run notification — sent directly to the Bot API via stdlib HTTP (`telegram_kit`), no external script or project required. Same name `~/.claude/scripts/tg-send.sh` already uses, so an existing setup carries over. Not part of the `AICP_*` config system at all (see below), so it can only ever be a real environment variable. |
 | `TG_CHAT_ID` | *(unset)* | Telegram chat to notify. Same rules as `TG_BOT_TOKEN`. |
 
 Either `TG_BOT_TOKEN` or `TG_CHAT_ID` missing (or the request failing) just
