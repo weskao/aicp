@@ -454,6 +454,159 @@ def test_a_traversal_key_does_not_hang_on_a_fifo(configured):
     assert result["state"] == skills.FOREIGN
 
 
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "\\Windows\\win.ini",  # rooted, no drive: is_absolute() is False on Windows
+        "/Windows/win.ini",    # same, forward slashes
+        "C:secret.txt",        # drive-relative: is_absolute() is False on Windows
+        "a\\..\\..\\secret",   # backslash traversal: one Path part on POSIX
+    ],
+)
+def test_a_windows_shaped_record_key_is_rejected_on_every_platform(rel, tmp_path):
+    """``Path.is_absolute()`` on Windows needs BOTH a drive and a root, so a
+    rooted key (``\\Windows\\win.ini``) or a drive-relative one (``C:x``) slips
+    through and ``target / rel`` lands outside the target. The guard has to
+    reject anything that anchors or traverses under EITHER path flavour."""
+    assert skills._resolve(tmp_path / "skill", rel) is None
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        42,
+        "not a record",
+        {"version": "0.1.0"},                        # no files
+        {"version": "0.1.0", "files": []},           # files not a dict
+        {"version": "0.1.0", "files": "x"},
+        {"version": "0.1.0", "files": {}},           # vacuously "matches" anything
+        {"files": {".": "0" * 64}},                  # no version
+        {"version": 7, "files": {".": "0" * 64}},    # version not a string
+    ],
+)
+def test_a_malformed_record_is_ignored_not_a_crash(configured, record):
+    """state.json is untrusted input at the RECORD level too. A record of the
+    wrong shape must read as "nothing recorded" (so content that matches what
+    aicp installs is still ours), never raise out of detect()/install()."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    target = h / ".codex/skills/commit/SKILL.md"
+    records = skills._load_state(h)
+    records[str(target)] = record
+    skills._save_state(records, h)
+
+    assert skills.detect(cli("codex"), "commit", home=h) == skills.CURRENT
+    assert skills.install([cli("codex")], home=h)[0].action == skills.UP_TO_DATE
+    skills.status_json([cli("codex")], home=h)
+
+
+@pytest.mark.parametrize(
+    "version", [pytest.param("9" * 5000, id="5000-digits"), "1.²", "", "1..2", "..."]
+)
+def test_a_garbage_version_string_never_crashes_detect(configured, version):
+    """``int("9"*5000)`` raises past Python's digit limit and ``"²".isdigit()``
+    is True while ``int("²")`` raises — a version string, from state.json or
+    a legacy sidecar, is data and must not be able to take detect() down."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    target = h / ".codex/skills/commit/SKILL.md"
+    age_record(target, h, version=version)
+
+    assert skills.detect(cli("codex"), "commit", home=h) in (skills.CURRENT, skills.OURS_OLDER)
+
+
+def _detect_with_a_deadline(h, skill: str, unstick: Path) -> str:
+    result: dict[str, str] = {}
+    worker = threading.Thread(
+        target=lambda: result.__setitem__("state", skills.detect(cli("codex"), skill, home=h)),
+        daemon=True,
+    )
+    worker.start()
+    worker.join(timeout=2)
+    if worker.is_alive():
+        with open(unstick, "wb"):  # unstick the hung open() so the thread can exit
+            pass
+        pytest.fail(f"detect() hung reading a FIFO at {unstick}")
+    return result["state"]
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFOs are POSIX-only")
+@pytest.mark.parametrize(
+    ("where", "expected"),
+    [
+        ("target", skills.FOREIGN),
+        ("inside_dir_skill", skills.FOREIGN),
+        # The skill file itself is intact; only the sidecar is unreadable, so
+        # it is skipped and the content check still finds our own bytes.
+        ("sidecar", skills.CURRENT),
+    ],
+)
+def test_a_fifo_inside_the_install_target_does_not_hang_detect(configured, where, expected):
+    """The earlier FIFO test only covered a TRAVERSAL key. A FIFO sitting at a
+    legitimate path — the target itself, a file inside a directory skill, or
+    a legacy sidecar — still reached ``read_bytes()``/``read_text()`` and
+    blocked forever. Anything that is not a regular file is not ours."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    if where == "target":
+        skill, path = "commit", h / ".codex/skills/commit/SKILL.md"
+    elif where == "inside_dir_skill":
+        skill, path = "safe-git-push", h / ".codex/skills/safe-git-push/SKILL.md"
+    else:
+        skill, path = "commit", h / ".codex/skills/commit/SKILL.md.aicp-version"
+        # No state record: force the legacy path, which parses the sidecar.
+        skills._save_state({}, h)
+    if path.exists():
+        path.unlink()
+    os.mkfifo(path)
+
+    assert _detect_with_a_deadline(h, skill, path) == expected
+
+
+def test_an_oversized_file_at_the_target_is_foreign_without_being_read(
+    configured, monkeypatch
+):
+    """A symlink (or plain file) in the config dir pointing at something huge
+    must not be slurped into memory just to learn it is not ours: nothing aicp
+    installs is anywhere near :data:`skills._MAX_SKILL_BYTES`."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    target = h / ".codex/skills/commit/SKILL.md"
+    with open(target, "r+b") as f:
+        f.truncate(skills._MAX_SKILL_BYTES + 1)  # sparse: instant, no disk cost
+
+    real = Path.read_bytes
+
+    def spy(self):
+        assert self != target, "detect() read a file bigger than anything aicp writes"
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", spy)
+    assert skills.detect(cli("codex"), "commit", home=h) == skills.FOREIGN
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink creation needs a privilege on Windows")
+def test_a_dangling_symlink_at_the_target_is_moved_aside_not_written_through(
+    configured, tmp_path
+):
+    """``exists()`` is False for a dangling symlink, so the target read as
+    MISSING and ``write_bytes`` then FOLLOWED the link — creating a file at
+    wherever it pointed, with aicp's privileges. The link is the user's; it is
+    parked as the backup like any other foreign file and a real file is written."""
+    h = configured("codex")
+    outside = tmp_path / "elsewhere" / "planted"
+    outside.parent.mkdir()
+    target = h / ".codex/skills/commit/SKILL.md"
+    target.parent.mkdir(parents=True)
+    target.symlink_to(outside)
+
+    skills.install([cli("codex")], home=h)
+
+    assert not outside.exists(), "install wrote through the symlink"
+    assert target.is_file() and not target.is_symlink()
+    assert target.with_name("SKILL.md.bak").is_symlink()
+
+
 # ── migrating off the legacy in-place sidecar ────────────────────────────────
 
 

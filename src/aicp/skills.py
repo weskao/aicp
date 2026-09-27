@@ -36,7 +36,7 @@ import os
 import tempfile
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from . import __version__
 from .agents import AGENTS
@@ -90,6 +90,12 @@ KEPT = "kept_foreign"  # foreign file left alone (no force)
 OVERWRITTEN = "overwritten"  # foreign file replaced, backup left behind
 
 BACKUP_SUFFIX = ".bak"
+
+#: Larger than anything aicp installs by orders of magnitude: a file above
+#: this cannot be ours, so it is never read just to hash it (a symlink in a
+#: config dir can point anywhere, including at something that would not fit
+#: in memory).
+_MAX_SKILL_BYTES = 4 << 20
 
 
 # ── the vendored skills ──────────────────────────────────────────────────────
@@ -235,12 +241,45 @@ def _load_state(home: Path | None = None) -> dict[str, dict]:
     the worst that follows is that installs read :data:`FOREIGN` and are left
     alone — never that the user's files are damaged.
     """
+    path = state_path(home)
+    if not _readable(path):
+        return {}
     try:
-        data = json.loads(state_path(home).read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
     records = data.get("skills") if isinstance(data, dict) else None
-    return records if isinstance(records, dict) else {}
+    if not isinstance(records, dict):
+        return {}
+    # Same posture one level down: a record of the wrong shape is dropped, not
+    # crashed on. The content check that follows still recognizes our own
+    # files, and an EMPTY ``files`` is rejected because it would vacuously
+    # "match" anything.
+    return {key: record for key, record in records.items() if _well_formed(record)}
+
+
+def _well_formed(record: object) -> bool:
+    return (
+        isinstance(record, dict)
+        and isinstance(record.get("version"), str)
+        and isinstance(record.get("files"), dict)
+        and bool(record["files"])
+        and all(isinstance(digest, str) for digest in record["files"].values())
+    )
+
+
+def _readable(path: Path) -> bool:
+    """Whether *path* may be read to hash or parse it.
+
+    Only a regular file of plausible size: a FIFO or device would block the
+    read forever, and a symlink to something enormous would be slurped whole
+    just to learn it is not ours. ``is_file`` follows symlinks, so a link to
+    either is refused the same way.
+    """
+    try:
+        return path.is_file() and path.stat().st_size <= _MAX_SKILL_BYTES
+    except OSError:
+        return False
 
 
 def _save_state(records: dict[str, dict], home: Path | None = None) -> None:
@@ -305,8 +344,12 @@ def _resolve(target: Path, rel: str) -> Path | None:
     """
     if rel == ".":
         return target
-    if Path(rel).is_absolute() or ".." in Path(rel).parts:
-        return None
+    # Both flavours, whatever this host is: ``Path.is_absolute()`` on Windows
+    # needs a drive AND a root, so a rooted ``\\Windows\\x`` or a
+    # drive-relative ``C:x`` is "relative" there yet lands outside *target*.
+    for flavour in (PurePosixPath(rel), PureWindowsPath(rel)):
+        if flavour.anchor or ".." in flavour.parts:
+            return None
     return target / rel
 
 
@@ -319,7 +362,7 @@ def _matches(target: Path, files: dict[str, str]) -> bool:
     """
     for rel, digest in files.items():
         resolved = _resolve(target, rel)
-        if resolved is None:
+        if resolved is None or not _readable(resolved):
             return False
         try:
             if _sha(resolved.read_bytes()) != digest:
@@ -340,6 +383,8 @@ def _disk_hashes(skill: Skill, target: Path) -> dict[str, str]:
     for rel in _owned(skill):
         resolved = _resolve(target, rel)
         assert resolved is not None, f"_owned() produced an unsafe key: {rel!r}"
+        if not _readable(resolved):
+            continue
         try:
             hashes[rel] = _sha(resolved.read_bytes())
         except OSError:
@@ -379,6 +424,8 @@ def _legacy_sidecar(skill: Skill, target: Path) -> Path:
 
 
 def _read_version(sidecar: Path) -> str | None:
+    if not _readable(sidecar):
+        return None
     try:
         text = sidecar.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -408,6 +455,8 @@ def _legacy_record(skill: Skill, target: Path, platform: Platform) -> dict | Non
     if version is None:
         return None
     hashes = _disk_hashes(skill, target)
+    if not hashes:
+        return None  # nothing readable on disk to vouch for — not ours
     if _as_tuple(version) >= _as_tuple(__version__):
         expected = _expected(skill, platform)
         if expected and hashes != expected:
@@ -440,7 +489,16 @@ def _migrate_legacy(
 
 
 def _as_tuple(version: str) -> tuple[int, ...]:
-    return tuple(int(p) if p.isdigit() else 0 for p in version.split("."))
+    """Lenient: any part that is not a short run of ASCII digits reads as 0.
+
+    ``str.isdigit`` alone is not enough — it is True for ``"²"``, which
+    ``int()`` then rejects — and ``int()`` also refuses more than 4300 digits.
+    A version string is data off disk, so neither may raise.
+    """
+    return tuple(
+        int(p) if p.isascii() and p.isdigit() and len(p) <= 9 else 0
+        for p in version.split(".")
+    )
 
 
 def _inspect(cli: CLI, skill: str, home: Path | None) -> tuple[str, str | None]:
@@ -464,7 +522,7 @@ def _inspect(cli: CLI, skill: str, home: Path | None) -> tuple[str, str | None]:
             return CURRENT, __version__
         return FOREIGN, None
 
-    if not _matches(target, record.get("files") or {}):
+    if not _matches(target, record["files"]):
         return FOREIGN, None  # ours once, hand-edited since — never overwrite
     version = record["version"]
     state = OURS_OLDER if _as_tuple(version) < _as_tuple(__version__) else CURRENT
@@ -574,7 +632,9 @@ def _write(dest: Path, data: bytes, *, backup: bool) -> Path | None:
     """Write *data* to *dest*, moving any existing file aside first."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     saved: Path | None = None
-    if backup and dest.exists():
+    # is_symlink too: exists() is False for a DANGLING link, and write_bytes
+    # would follow it and create a file wherever it points.
+    if backup and (dest.exists() or dest.is_symlink()):
         saved = _backup_path(dest)
         # os.replace rather than shutil.move: shutil.move's os.rename raises
         # FileExistsError on Windows if the destination is taken, and this

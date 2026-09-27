@@ -480,9 +480,9 @@ platform is a reduced or best-effort target.
 | Windows | Every AI CLI ships as an npm `.cmd`/`.bat` shim, which Windows can't launch directly (`CreateProcess` doesn't honor `PATHEXT` and can't run a batch file itself) — aicp resolves the real executable and, for a shim, launches it through `cmd.exe` itself rather than `shell=True`, so no user-controlled text ever builds a shell command line. Ctrl+C is forwarded as `CTRL_BREAK_EVENT` rather than delivered directly (Windows has no "foreground process group" concept), so a CLI that ignores that signal may not stop as cleanly as it would elsewhere. |
 
 On POSIX, a per-CLI timeout signals the CLI process itself, not any
-grandchildren it spawned. On Windows, terminating the intermediate `cmd.exe`
-can orphan the CLI behind the shim; that high-priority defect remains open in
-[TODO.md](TODO.md). Ctrl+C still targets the Windows process group.
+grandchildren it spawned. On Windows, a timeout kills the whole process tree
+(`taskkill /T /F`), so the CLI behind the `cmd.exe` shim goes with it. Ctrl+C
+still targets the Windows process group.
 
 ## License
 

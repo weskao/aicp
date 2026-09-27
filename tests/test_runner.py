@@ -717,6 +717,81 @@ def test_a_timed_out_cli_is_actually_killed_not_merely_abandoned(
     assert pid_is_gone(int(pidfile.read_text())), "the timed-out CLI is still running"
 
 
+def _windows_pid_alive(pid: int) -> bool:
+    """``os.kill(pid, 0)`` is NOT a probe on Windows — it TerminateProcess()es
+    the target — so ask tasklist instead."""
+    out = subprocess.run(
+        ["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
+        capture_output=True, text=True, check=False,
+    ).stdout
+    return f'"{pid}"' in out
+
+
+@WINDOWS_ONLY
+def test_a_timed_out_batch_shim_takes_its_grandchild_with_it(
+    tmp_path, timing_log, monkeypatch
+):
+    """The Windows shape of the test above.
+
+    An npm-installed CLI is a .cmd shim, so the child aicp holds is a cmd.exe
+    and the CLI is its grandchild. ``proc.terminate()`` (TerminateProcess) is
+    per-process: it killed cmd.exe and left the CLI running, orphaned, still
+    burning quota with nobody waiting on it. The stub is exactly that shape —
+    a .cmd that runs a python grandchild which records its own pid and hangs.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    pidfile = tmp_path / "grandchild.pid"
+    hang = tmp_path / "hang.py"
+    hang.write_text(
+        "import os, sys, time, pathlib\n"
+        "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))\n"
+        "time.sleep(30)\n"
+    )
+    (bin_dir / "copilot.cmd").write_text(
+        f'@echo off\r\n"{sys.executable}" "{hang}" "{pidfile}"\r\nexit /b %ERRORLEVEL%\r\n'
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("AICP_STEP_TIMEOUT", "1")
+
+    started = time.monotonic()
+    rc, out = run(chain=("copilot",))
+    elapsed = time.monotonic() - started
+
+    assert rc == 1 and "timed out" in out
+    assert elapsed < 20, "the runner waited the grandchild out instead of killing it"
+    pid = int(pidfile.read_text())
+    deadline = time.monotonic() + 10
+    while _windows_pid_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    assert not _windows_pid_alive(pid), "the CLI behind the .cmd shim was orphaned"
+
+
+def test_kill_tree_on_windows_uses_taskkill_on_the_whole_tree(monkeypatch):
+    """Runs everywhere: pins the mechanism the live Windows test proves.
+
+    ``/T`` is the whole point (the grandchild), ``/F`` because a hung CLI is
+    what got us here, and the binary is named by absolute path so a
+    ``taskkill.exe`` dropped in the repo being committed cannot win.
+    """
+    monkeypatch.setattr(runner, "IS_WINDOWS", True)
+    monkeypatch.setenv("SystemRoot", r"C:\Windows")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        runner.subprocess, "run", lambda argv, **kw: calls.append(argv) or None
+    )
+
+    class Proc:
+        pid = 4242
+
+        def kill(self):
+            calls.append(["kill"])
+
+    runner._kill_tree(Proc())
+
+    assert calls[0] == [r"C:\Windows\System32\taskkill.exe", "/T", "/F", "/PID", "4242"]
+
+
 @POSIX_ONLY
 def test_a_timeout_notifies_and_names_the_cli_and_budget(sh_stub, tmp_path, monkeypatch):
     sh_stub("copilot", "sleep 30\n")
