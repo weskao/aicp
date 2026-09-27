@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
 
 import pytest
 
@@ -162,3 +163,56 @@ def test_quoted_paths_are_unquoted(menu, tmp_path, monkeypatch, quote):
     menu(f"{EXPORT_ROW}\n{quote}{folder}{quote}\nq\n", initial=json.dumps({"AICP_LANG": "en"}))
     assert list(folder.glob("aicp-settings-*.json"))
     assert not (tmp_path / quote).exists()
+
+
+# ── Arrow-key TUI: same erase-and-return as the Agents row ─────────────────
+
+
+@pytest.fixture
+def home(pinned_environment) -> Path:
+    """The fake ``$HOME`` conftest already pointed ``HOME`` at — mirrors
+    ``test_menu_skills.py``'s fixture of the same name."""
+    return Path.home()
+
+
+def _ups(text: str) -> list[int]:
+    """Every ``\\033[<N>A`` cursor-up distance CSI actually wrote, in order."""
+    ups = []
+    needle, i = "\033[", 0
+    while True:
+        j = text.find(needle, i)
+        if j < 0:
+            break
+        k = text.find("A", j)
+        if k > j and text[j + 2 : k].isdigit():
+            ups.append(int(text[j + 2 : k]))
+        i = j + 2
+    return ups
+
+
+def test_export_returns_to_the_main_panel_instead_of_stacking_a_new_one(home):
+    """Same bug as ``test_leaving_agents_erases_the_parent_panel_before_
+    redraw`` in ``test_menu_skills.py``, applied to Export: the arrow-key
+    TUI must erase its own prompt+result and the stale parent panel behind
+    it, then settle on ONE panel — not leave the old panel sitting above a
+    freshly drawn one, multiplying with every use.
+    """
+    from aicp import agents
+    from aicp.menu import MenuState, _frame_rows, _panel, _tui
+
+    state = MenuState(
+        home / ".aicp" / "menu.aicprc", True, True, "en", [row.name for row in agents.inventory(home)]
+    )
+    parent_rows = _frame_rows(_panel(state, selected=EXPORT_ROW, out=io.StringIO()), io.StringIO())
+    down_to_export = "down\n" * (EXPORT_ROW - 1)
+    dest = home / "out.json"
+    buf = io.StringIO()
+
+    code = _tui(state, io.StringIO(f"{down_to_export}enter\n{dest}\nquit\n"), buf)
+
+    assert code == 0
+    assert dest.exists()
+    text = buf.getvalue()
+    assert "wrote" in text or "已寫入" in text
+    ups = _ups(text)
+    assert any(u >= parent_rows for u in ups), f"expected an erase of at least the parent ({parent_rows}); ups: {ups}"

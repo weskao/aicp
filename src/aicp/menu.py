@@ -164,10 +164,19 @@ class Row:
     value: Callable[[MenuState], str]
     accent: Callable[[MenuState], str]
     cycle: Callable[[MenuState, int], str] | None = None
-    #: ``(state, stdin, stdout)``. Must never block on a non-TTY stdin —
-    #: ``read_line`` returns ``None`` at EOF and every prompt here reads that
-    #: as "no", because aicp runs in CI.
-    action: Callable[[MenuState, IO[str], IO[str]], None] | None = None
+    #: ``(state, stdin, stdout)`` → the result line(s) it printed, if any.
+    #: Must never block on a non-TTY stdin — ``read_line`` returns ``None``
+    #: at EOF and every prompt here reads that as "no", because aicp runs
+    #: in CI.
+    action: Callable[[MenuState, IO[str], IO[str]], list[str] | None] | None = None
+    #: An action row whose prompt+result is a one-shot outcome rather than a
+    #: report meant to be read (Export/Import; Agents has its own bespoke
+    #: sub-panel and never sets this) — the arrow-key TUI erases the row's
+    #: own output plus the stale parent panel behind it, then redraws one
+    #: fresh panel with the action's returned message(s) as its note,
+    #: instead of stacking a new panel below what was just printed. The
+    #: numbered fallback ignores this; it always scrolls, by design.
+    returns_to_panel: bool = False
 
 
 def _on_off(state: MenuState, flag: bool) -> str:
@@ -1002,12 +1011,17 @@ def _export_target(text: str) -> Path:
     return path if path.suffix else path.with_suffix(".json")
 
 
-def _export_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
+def _export_action(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
     """Save the current settings to a file.
 
     No secret ever passes through this: this layer's config.json holds only
     timeouts, toggles and the CLI order — nothing a keychain would guard —
     so :func:`~aicp.config.export_payload` needs no filtering.
+
+    Returns the result line(s) it printed (empty when cancelled) — the
+    numbered fallback shows them inline like every other action, and the
+    arrow-key TUI reuses the same strings as the panel note it settles on
+    instead of guessing one out of whatever scrolled past.
     """
     print(file=out)
     print(
@@ -1019,26 +1033,32 @@ def _export_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
         file=out,
     )
     text = read_line(stdin)
+    messages: list[str] = []
     if text:
         target = _export_target(text)
         data = export_payload(state.path)
         if _write_json_private(target, data):
-            print(
+            messages.append(
                 f"  {GREEN}"
                 + _t(state.lang, "settings_export_done", "✓ wrote %s (%s setting(s))", target.resolve(), len(data))
-                + RESET,
-                file=out,
+                + RESET
             )
         else:
-            print(
-                f"  {RED}" + _t(state.lang, "settings_export_failed", "✗ could not write %s", target) + RESET,
-                file=out,
+            messages.append(
+                f"  {RED}" + _t(state.lang, "settings_export_failed", "✗ could not write %s", target) + RESET
             )
+        for message in messages:
+            print(message, file=out)
     print(file=out)
+    return messages
 
 
-def _import_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
-    """Load settings from a file written by :func:`_export_action`."""
+def _import_action(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
+    """Load settings from a file written by :func:`_export_action`.
+
+    Returns the result line(s) it printed, same contract as
+    :func:`_export_action` — see its docstring.
+    """
     print(file=out)
     print(
         _t(state.lang, "settings_import_q", "Load which file? Paste or drag it here [⏎ to cancel]: "),
@@ -1047,27 +1067,25 @@ def _import_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
     text = read_line(stdin)
     if not text:
         print(file=out)
-        return
+        return []
     source = typed_path(text)
     accepted, skipped = import_updates(_read_json_object(source))
     if not accepted:
-        print(
-            f"  {RED}" + _t(state.lang, "settings_import_empty", "✗ nothing importable in %s", source) + RESET,
-            file=out,
-        )
+        message = f"  {RED}" + _t(state.lang, "settings_import_empty", "✗ nothing importable in %s", source) + RESET
+        print(message, file=out)
         print(file=out)
-        return
+        return [message]
     merged = _read_json_object(state.path)
     merged.update(accepted)
     if not _write_json_private(state.path, merged):
-        print(
+        message = (
             f"  {RED}"
             + _t(state.lang, "settings_import_failed", "✗ could not save imported settings to %s", state.path)
-            + RESET,
-            file=out,
+            + RESET
         )
+        print(message, file=out)
         print(file=out)
-        return
+        return [message]
     # Rebuilt from the file we just wrote, exactly like the initial
     # MenuState.from_settings(resolve()) — so a toggle row an import just
     # changed repaints correctly instead of showing the pre-import value.
@@ -1078,18 +1096,19 @@ def _import_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
     state.chain = refreshed.chain
     state.update_check = refreshed.update_check
     state.health = None
-    print(
-        f"  {GREEN}" + _t(state.lang, "settings_import_done", "✓ imported %s setting(s)", len(accepted)) + RESET,
-        file=out,
-    )
+    messages = [
+        f"  {GREEN}" + _t(state.lang, "settings_import_done", "✓ imported %s setting(s)", len(accepted)) + RESET
+    ]
     if skipped:
-        print(
+        messages.append(
             f"  {DIM}"
             + _t(state.lang, "settings_import_skipped", "skipped: %s", ", ".join(sorted(skipped)))
-            + RESET,
-            file=out,
+            + RESET
         )
+    for message in messages:
+        print(message, file=out)
     print(file=out)
+    return messages
 
 
 #: The menu, in display order. Append to extend — see the module docstring.
@@ -1212,6 +1231,7 @@ ROWS: tuple[Row, ...] = (
         value=lambda s: _t(s.lang, "config_settings_export_value", "save to file"),
         accent=lambda _s: CYAN,
         action=_export_action,
+        returns_to_panel=True,
     ),
     Row(
         key="",
@@ -1224,6 +1244,7 @@ ROWS: tuple[Row, ...] = (
         value=lambda s: _t(s.lang, "config_settings_import_value", "load from file"),
         accent=lambda _s: CYAN,
         action=_import_action,
+        returns_to_panel=True,
     ),
 )
 #: Row numbers are right-aligned so "9)" and "10)" keep labels in one column.
@@ -1283,6 +1304,7 @@ def _panel(
     selected: int | None = None,
     out: IO[str] | None = None,
     order_value: str | None = None,
+    messages: Sequence[str] = (),
 ) -> list[str]:
     """The framed settings box, numbered for the typed-choice surface.
 
@@ -1295,6 +1317,11 @@ def _panel(
     current row, the full health report so the details appear on highlight
     without needing Enter. The numbered fallback has no single current row,
     so it gets only the digit-choice hint instead.
+
+    ``messages`` is a ``returns_to_panel`` action's own result line(s),
+    already colour-coded — shown as extra notes on the panel it settles
+    back into after erasing its prompt+result, so the outcome is still
+    readable instead of vanishing with the transcript it replaced.
 
     ``order_value`` swaps in an already-rendered motion frame for the AI CLI
     order row (see :func:`_order_motion`); everything else about the panel is
@@ -1341,6 +1368,9 @@ def _panel(
         help_line = fitted_help[selected - 1]
         help_line += " " * (reserve - width(help_line))
         notes = [f"{DIM}{help_line}{RESET}", ""]
+        if messages:
+            notes.extend(messages)
+            notes.append("")
         if _is_doctor(ROWS[selected - 1]):
             notes.extend(_doctor_detail_notes(state, reserve))
             notes.append("")
@@ -1653,6 +1683,49 @@ def _frame_rows(lines: list[str], out: IO[str]) -> int:
     return sum(-(-width(line) // columns) or 1 for line in lines)
 
 
+class _Recorder:
+    """Tees writes to *out* while remembering each line printed through it,
+    so a ``returns_to_panel`` action's own output can be erased by its exact
+    row count afterwards — the action itself prints normally and stays
+    unaware it is being watched."""
+
+    def __init__(self, out: IO[str]) -> None:
+        self._out = out
+        self.lines: list[str] = []
+        self._buf = ""
+
+    def write(self, s: str) -> int:
+        self._out.write(s)
+        *complete, self._buf = (self._buf + s).split("\n")
+        self.lines.extend(complete)
+        return len(s)
+
+    def flush(self) -> None:
+        self._out.flush()
+
+
+def _return_to_panel(
+    state: MenuState,
+    out: IO[str],
+    selected: int,
+    parent_lines: list[str],
+    extra_rows: int,
+    messages: Sequence[str] = (),
+) -> list[str]:
+    """Erase *parent_lines* plus whatever was drawn below them (a sub-panel,
+    or a ``returns_to_panel`` action's recorded prompt+result), then redraw
+    the main panel once in its place — the Agents row's own erase-and-return
+    step, shared so a future ``returns_to_panel`` action gets it by setting
+    that flag instead of reimplementing the CSI arithmetic.
+    """
+    up = _frame_rows(parent_lines, out) + extra_rows
+    out.write(f"\033[{up}A\033[J")
+    lines = _panel(state, selected, out, messages=messages)
+    for line in lines:
+        print(line, file=out)
+    return lines
+
+
 def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
     """Arrow-key surface. Repaints in place by walking back up the frame it
     just drew; ``\\033[J`` erases to the end of the screen because switching
@@ -1689,11 +1762,22 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
                         # redraw — erasing only the child leaves the old
                         # parent on screen and the next Enter stacks another.
                         agent_lines = _agents_tui(state, stdin, out, typed)
-                        up = _frame_rows(lines, out) + _frame_rows(agent_lines, out)
-                        out.write(f"\033[{up}A\033[J")
-                        lines = _panel(state, selected, out)
-                        for line in lines:
-                            print(line, file=out)
+                        lines = _return_to_panel(
+                            state, out, selected, lines, _frame_rows(agent_lines, out)
+                        )
+                        continue
+                    if row.action is not None and row.returns_to_panel:
+                        # A one-shot outcome (Export/Import), not a report —
+                        # same erase-and-return as Agents above, sharing its
+                        # helper: the prompt+result is recorded rather than
+                        # left stacked above yet another fresh panel, and its
+                        # own result line(s) carry over as that panel's note.
+                        recorder = _Recorder(out)
+                        with typed():
+                            messages = row.action(state, stdin, recorder) or []
+                        lines = _return_to_panel(
+                            state, out, selected, lines, _frame_rows(recorder.lines, out), messages
+                        )
                         continue
                     if not _write(state, row, -1 if key == "left" else 1, stdin, out, typed):
                         return 1
