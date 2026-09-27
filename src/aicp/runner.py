@@ -234,6 +234,25 @@ def _launch_command(argv: list[str]) -> list[str] | str:
     return f'"{comspec}" /d /s /c "{inner}"'
 
 
+def _kill_tree(proc: Any) -> None:
+    """Hard-kill *proc* — and on Windows everything under it.
+
+    A batch-shim CLI is the GRANDCHILD of the cmd.exe *proc* names, and
+    ``TerminateProcess`` (``proc.kill()``) is per-process: it killed cmd.exe
+    and left the CLI running with nobody waiting on it. ``taskkill /T`` walks
+    the tree while cmd.exe is still alive to be walked from; once the parent
+    is gone the child is reparented and unreachable, which is why this runs
+    INSTEAD of ``kill()`` first and not after it.
+    """
+    if IS_WINDOWS:
+        system_root = os.environ.get("SystemRoot") or "C:\\Windows"
+        subprocess.run(
+            [f"{system_root}\\System32\\taskkill.exe", "/T", "/F", "/PID", str(proc.pid)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+    proc.kill()
+
+
 def normalize_rc(returncode: int) -> int:
     """Python reports a signal-killed child as ``-N``; zsh reports ``128+N``."""
     return 128 - returncode if returncode < 0 else returncode
@@ -300,11 +319,11 @@ def _invoke(
     both places.
 
     On Windows a batch-shim CLI runs under a cmd.exe this function spawned (see
-    :func:`_launch_command`), which widens the limitation this module's
-    docstring already states: ``terminate()``/``kill()`` then reach cmd.exe and
-    not the CLI behind it. ``CREATE_NEW_PROCESS_GROUP`` puts both in the same
-    new group, so the ``CTRL_BREAK_EVENT`` path — the one that matters for
-    Ctrl+C — still reaches the CLI itself.
+    :func:`_launch_command`), so ``terminate()``/``kill()`` would reach cmd.exe
+    and not the CLI behind it; every hard kill here goes through
+    :func:`_kill_tree` for that reason. ``CREATE_NEW_PROCESS_GROUP`` puts both
+    in the same new group, so the ``CTRL_BREAK_EVENT`` path — the one that
+    matters for Ctrl+C — reaches the CLI itself.
     """
     command = _launch_command(argv)
     kwargs: dict[str, Any] = {"cwd": cwd}
@@ -326,6 +345,13 @@ def _invoke(
         try:
             proc.communicate(timeout=seconds)
         except subprocess.TimeoutExpired:
+            if IS_WINDOWS:
+                # terminate() is TerminateProcess here — already the hard
+                # kill, with no grace to offer — and per-process, which is the
+                # orphan bug _kill_tree exists for.
+                _kill_tree(proc)
+                proc.communicate()
+                return TIMEOUT_RC, True
             # SIGTERM first, SIGKILL after the grace period — timeout's
             # --kill-after=10. Only the CLI itself is signalled, not its
             # grandchildren; see this module's docstring.
@@ -344,13 +370,13 @@ def _invoke(
                 try:
                     proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
                 except Exception:  # noqa: BLE001 - delivery can fail many ways
-                    proc.terminate()
+                    _kill_tree(proc)
             # On POSIX the child already took the same SIGINT (same process
             # group); wait for it to unwind rather than second-guessing it.
             proc.communicate()
             raise
         except BaseException:
-            proc.kill()
+            _kill_tree(proc)
             raise
         return normalize_rc(proc.returncode), False
 
