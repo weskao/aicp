@@ -42,6 +42,7 @@ is a form and not a row.
 from __future__ import annotations
 
 import contextlib
+import datetime
 import io
 import os
 import sys
@@ -53,7 +54,18 @@ from typing import IO
 
 from . import __version__, agentcfg, agents, gitflow, i18n, skills, update_check
 from ._keyreader import is_interactive, key_session, pending, read_key, read_line
-from ._utils import BLUE, BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW, color_supported
+from ._utils import (
+    BLUE,
+    BOLD,
+    CYAN,
+    DIM,
+    GREEN,
+    RED,
+    RESET,
+    YELLOW,
+    color_supported,
+    typed_path,
+)
 
 # _KEY_RE and _SYSTEM_RESOLVED are read, not copied: the doctor reports on the
 # loader's own verdict about a line, so it has to ask with the loader's own key
@@ -974,30 +986,39 @@ def _doctor_action(state: MenuState, _stdin: IO[str], out: IO[str]) -> None:
     print(file=out)
 
 
-def _settings_value(_state: MenuState) -> str:
-    return "export / import"
+def _export_target(text: str) -> Path:
+    """Where an export lands: a folder gets an auto-named file inside it, and
+    a bare name gets ``.json`` — nobody should have to know the format."""
+    path = typed_path(text)
+    if path.is_dir() or text.rstrip("'\"").endswith(("/", os.sep)):
+        return path / f"aicp-settings-{datetime.datetime.now().astimezone().date().isoformat()}.json"
+    return path if path.suffix else path.with_suffix(".json")
 
 
-def _settings_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
-    """Save the current settings to a file, or load them from one.
+def _export_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
+    """Save the current settings to a file.
 
     No secret ever passes through this: this layer's config.json holds only
     timeouts, toggles and the CLI order — nothing a keychain would guard —
     so :func:`~aicp.config.export_payload` needs no filtering.
     """
     print(file=out)
-    print(_t(state.lang, "config_settings_io", "Import/export settings"), file=out)  # the row's own label
     print(
-        _t(state.lang, "settings_export_q", "Export current settings to file [⏎ to skip]: "),
+        _t(
+            state.lang,
+            "settings_export_q",
+            "Save to? Paste a folder (file is named for you) or a file name [⏎ to cancel]: ",
+        ),
         file=out,
     )
-    target = read_line(stdin)
-    if target:
+    text = read_line(stdin)
+    if text:
+        target = _export_target(text)
         data = export_payload(state.path)
-        if _write_json_private(Path(target), data):
+        if _write_json_private(target, data):
             print(
                 f"  {GREEN}"
-                + _t(state.lang, "settings_export_done", "✓ wrote %s (%s setting(s))", target, len(data))
+                + _t(state.lang, "settings_export_done", "✓ wrote %s (%s setting(s))", target.resolve(), len(data))
                 + RESET,
                 file=out,
             )
@@ -1006,17 +1027,22 @@ def _settings_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
                 f"  {RED}" + _t(state.lang, "settings_export_failed", "✗ could not write %s", target) + RESET,
                 file=out,
             )
-        print(file=out)
-        return
+    print(file=out)
+
+
+def _import_action(state: MenuState, stdin: IO[str], out: IO[str]) -> None:
+    """Load settings from a file written by :func:`_export_action`."""
+    print(file=out)
     print(
-        _t(state.lang, "settings_import_q", "Import settings from file [⏎ to skip]: "),
+        _t(state.lang, "settings_import_q", "Load which file? Paste or drag it here [⏎ to cancel]: "),
         file=out,
     )
-    source = read_line(stdin)
-    if not source:
+    text = read_line(stdin)
+    if not text:
         print(file=out)
         return
-    accepted, skipped = import_updates(_read_json_object(Path(source)))
+    source = typed_path(text)
+    accepted, skipped = import_updates(_read_json_object(source))
     if not accepted:
         print(
             f"  {RED}" + _t(state.lang, "settings_import_empty", "✗ nothing importable in %s", source) + RESET,
@@ -1171,16 +1197,30 @@ ROWS: tuple[Row, ...] = (
     Row(
         key="",
         group=None,
-        label=("config_settings_io", "Import/export settings"),
+        label=("config_settings_export", "Export settings"),
         help=(
-            "config_help_settings_io",
-            "Save config.json to a file, or load one written by another machine.",
+            "config_help_settings_export",
+            "Save these settings to a file, to back them up or copy to another machine.",
         ),
-        value=_settings_value,
+        value=lambda s: _t(s.lang, "config_settings_export_value", "save to file"),
         accent=lambda _s: CYAN,
-        action=_settings_action,
+        action=_export_action,
+    ),
+    Row(
+        key="",
+        group=None,
+        label=("config_settings_import", "Import settings"),
+        help=(
+            "config_help_settings_import",
+            "Load a file saved by Export settings; settings it does not mention are kept.",
+        ),
+        value=lambda s: _t(s.lang, "config_settings_import_value", "load from file"),
+        accent=lambda _s: CYAN,
+        action=_import_action,
     ),
 )
+#: Row numbers are right-aligned so "9)" and "10)" keep labels in one column.
+_NUM_WIDTH = len(str(len(ROWS)))
 
 
 def _terminal_size(out: IO[str]) -> os.terminal_size:
@@ -1226,7 +1266,7 @@ def _fit_columns(state: MenuState, out: IO[str]) -> tuple[int, int]:
     stays exact.
     """
     frame = _terminal_size(out).columns - 2
-    labels = [f"  {i}) {_t(state.lang, *row.label)}" for i, row in enumerate(ROWS, start=1)]
+    labels = [f"  {i:>{_NUM_WIDTH}}) {_t(state.lang, *row.label)}" for i, row in enumerate(ROWS, start=1)]
     labels += [_t(state.lang, *row.group) for row in ROWS if row.group]
     return frame, max(frame - 6 - max(width(label) for label in labels), _MIN_VALUE_COLUMNS)
 
@@ -1267,7 +1307,7 @@ def _panel(
             if order_value is not None and row.key == "AICP_CLI_ORDER"
             else _fit(row.value(state), value_columns)
         )
-        label = f"{marker} {i}) {_t(state.lang, *row.label)}"
+        label = f"{marker} {i:>{_NUM_WIDTH}}) {_t(state.lang, *row.label)}"
         # The cursor row stands out by weight, not a new hue: RESET cancels
         # render_panel's own DIM before BOLD applies, matching the group
         # headings above and keeping every hue's existing meaning intact.

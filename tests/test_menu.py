@@ -175,7 +175,7 @@ def test_selecting_a_different_row_does_not_resize_the_panel():
     assert len(widths) == 1, "the frame width changed when a different row was selected"
 
 
-@pytest.mark.parametrize("columns, lines", [(80, 24), (100, 24), (60, 24), (100, 15)])
+@pytest.mark.parametrize("columns, lines", [(80, 24), (100, 24), (60, 24), (100, 16)])
 def test_the_panel_fits_the_terminal_it_draws_on(columns, lines, monkeypatch):
     """Every line inside the terminal, in both languages.
 
@@ -446,8 +446,8 @@ def test_non_tty_fallback_is_taken_on_a_real_pipe_fd():
 
 
 def test_rows_are_data_addressed_by_index(menu):
-    # The last four are the appended action rows (Skills, Agents, Doctor,
-    # Import/export settings): they run something instead of persisting a
+    # The last five are the appended action rows (Skills, Agents, Doctor,
+    # Export settings, Import settings): they run something instead of persisting a
     # setting, hence no config key. See test_menu_skills.py.
     assert tuple(row.key for row in ROWS) == (
         "AICP_DO_COMMIT",
@@ -455,6 +455,7 @@ def test_rows_are_data_addressed_by_index(menu):
         "AICP_LANG",
         "AICP_UPDATE_CHECK",
         "AICP_CLI_ORDER",
+        "",
         "",
         "",
         "",

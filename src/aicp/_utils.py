@@ -89,6 +89,21 @@ def home_config_dir(env_var: str, default: Path) -> Path:
     return Path(override) if override else default
 
 
+def typed_path(text: str) -> Path:
+    """A path as a person pastes or drags it into a terminal prompt.
+
+    Strips the wrapping quotes Finder/Explorer "copy as path" add, and on
+    POSIX the ``\\ `` escapes a Terminal drag-and-drop adds, then expands
+    ``~``. Windows keeps backslashes: they are its separator, not escapes.
+    """
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        text = text[1:-1]
+    elif not IS_WINDOWS:
+        text = text.replace("\\ ", " ")
+    return Path(text).expanduser()
+
+
 # ── interruptible subprocess ─────────────────────────────────────────────────
 #
 # The zsh original's ``_aicp_timeout`` wraps every CLI invocation with GNU

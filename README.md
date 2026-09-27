@@ -425,8 +425,10 @@ old file is left in place untouched, never deleted or rewritten.
 
 See [`config.example.json`](config.example.json) for a ready-to-copy template.
 
-The **Import/export settings** row of `aicp --config` saves the same JSON
-object to a file you name, or loads one written by another machine — same
+The **Export settings** row of `aicp --config` saves the same JSON object to
+a file — paste a folder and it is named `aicp-settings-<date>.json` for you,
+or type a name (`.json` is added if missing); quoted or drag-and-dropped paths
+work as-is. **Import settings** loads such a file from another machine — same
 merge/skip rules as above (a denylisted or malformed key is named and left
 out, everything else already in `config.json` is kept). There are no secrets
 in this file to filter: `aicp` stores none.
