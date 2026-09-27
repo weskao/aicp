@@ -1,3 +1,8 @@
+## [0.13.3] - 2026-09-27
+
+### 🐛 Bug Fixes
+
+- **cli:** Resolve --help text in the configured language
 ## [0.13.2] - 2026-09-26
 
 ### 🐛 Bug Fixes
