@@ -1,3 +1,8 @@
+## [0.14.1] - 2026-09-27
+
+### 💼 Other
+
+- **deps:** Bump telegram-kit to v0.1.4
 ## [0.14.0] - 2026-09-27
 
 ### 🚀 Features
