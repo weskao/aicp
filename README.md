@@ -161,7 +161,8 @@ set it, all writing the same `aicp_cli_order` key:
 
 ```sh
 aicp --swap-ai   # pick a CLI, it trades places with whoever holds #1
-aicp --config    # the AI CLI order row, arrow keys
+aicp --config    # Agents row: ←/→ moves one CLI, t sends it to #1
+                 # (the AI CLI order row's ←/→ rotates the whole chain)
 ```
 
 ```sh
@@ -306,8 +307,23 @@ upgrades replace). Your changes live in `~/.aicp/agents.json`, which aicp
 merges over the built-in registry at startup: your entries win on conflict,
 and an entry with `"disabled": true` removes that agent from the chain.
 
-You don't have to write that file by hand. `aicp --agents` edits it for you,
-and so does the **Agents** row of `aicp --config`:
+You don't have to write that file by hand. The **Agents** row of
+`aicp --config` opens a panel listing every agent in try order (disabled ones
+at the bottom), where everything below is one key away and saved at once:
+
+| Key | Action |
+| --- | --- |
+| `←` / `→` | Move the highlighted agent up / down one place |
+| `t` | Move it to #1 (trades places, like `--swap-ai`) |
+| `space` | Turn it on / off |
+| `e` | Edit its fields — one prompt per field, `⏎` keeps the current value |
+| `a` | Add a new agent — asks for each field; the name is checked first |
+| `r` | Reset an override to the built-in definition, or remove an added agent (asks `[y/N]`) |
+| `⏎` | Open the same actions as a menu, each showing its hotkey |
+
+Ctrl+C or EOF cancels a form without writing anything. Hints and prompts
+follow the configured language. Scripts and CI, which have no terminal to
+press keys in, use the same edits as `aicp --agents`:
 
 ```sh
 aicp --agents                                   # list every agent and where it came from
@@ -328,7 +344,10 @@ reset a fallback order you picked on purpose. The last remaining agent can't
 be disabled.
 
 **Adding a new agent** — example: [MiniMax](https://www.minimaxi.com/) CLI.
-Every field is required for a name the built-in registry has never heard of:
+Every field is required for a name the built-in registry has never heard of
+(except `config_dir_env`). Names use letters, digits, `.`, `_` and `-` only,
+since they also appear in the space-separated `aicp_cli_order`. In the menu,
+press `a` and answer the prompts; the scripted form is:
 
 ```sh
 aicp --agents set minimax \
@@ -360,7 +379,8 @@ has to go into the file by hand. The equivalent written out:
 ```
 
 A new agent joins the end of the fallback chain automatically. To put it
-first, use `aicp --swap-ai`, the AI CLI order row of `aicp --config`, or set
+first, press `t` on it in the Agents row of `aicp --config`, use
+`aicp --swap-ai`, or set
 the order yourself:
 
 ```sh

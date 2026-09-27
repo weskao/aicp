@@ -129,6 +129,8 @@ def test_reset_reverts_a_built_in_but_removes_an_added_one(home):
         ("set", "minimax", ["bogus=1"]),  # not a field
         ("set", "minimax", ["executable="]),  # empty
         ("set", "minimax", []),  # nothing to set
+        ("set", "my agent", MINIMAX),  # a space splits aicp_cli_order
+        ("set", "", MINIMAX),  # no name at all
         ("disable", "nope", []),  # unknown agent
         ("frobnicate", "grok", []),  # unknown verb
     ],

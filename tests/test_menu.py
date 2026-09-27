@@ -124,6 +124,14 @@ def test_the_cli_row_rotates_the_chain_and_persists_it(menu):
     assert json.loads(cfg.read_text(encoding="utf-8"))["aicp_cli_order"] == rotated
 
 
+def test_space_changes_the_highlighted_row_like_enter_does(tmp_path):
+    from aicp.menu import _tui
+
+    state = MenuState(tmp_path / "menu.json", True, True, "en", list(ROSTER_NAMES))
+    assert _tui(state, io.StringIO("space\nquit\n"), io.StringIO()) == 0
+    assert state.do_commit is False
+
+
 def test_the_update_check_toggle_is_written_immediately(menu):
     _, out, cfg = menu(f"{_row_number('config_update_check')}\nq\n")
     assert json.loads(cfg.read_text(encoding="utf-8"))["aicp_update_check"] == "0"
@@ -376,6 +384,10 @@ def raw_pty():
         (b"q", "quit"),
         (b"\x03", "quit"),  # raw mode disables ISIG, so Ctrl+C is a byte
         (b"r", "reset"),
+        (b" ", "space"),
+        (b"t", "top"),
+        (b"e", "edit"),
+        (b"a", "add"),
     ],
 )
 def test_raw_key_reading_over_a_real_pty(raw_pty, typed, expected):

@@ -14,13 +14,14 @@ byte-identical, so a typo can never leave aicp unable to start.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
 
 from . import agents, config
 
-__all__ = ["EDITABLE", "STATE_LABELS", "VERBS", "AgentEditError", "Change", "apply"]
+__all__ = ["DONE_LABELS", "EDITABLE", "STATE_LABELS", "VERBS", "AgentEditError", "Change", "apply"]
 
 
 class AgentEditError(ValueError):
@@ -36,6 +37,8 @@ EDITABLE = tuple(field.name for field in fields(agents.Agent))
 
 VERBS = ("list", "enable", "disable", "set", "reset")
 
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
 #: Display text per :func:`aicp.agents.inventory` state, as ``(msgid,
 #: english)`` — the menu translates with its live language, the CLI with the
 #: resolved one, both off this single table.
@@ -44,6 +47,16 @@ STATE_LABELS = {
     agents.OVERRIDDEN: ("agents_state_overridden", "overridden"),
     agents.ADDED: ("agents_state_added", "added"),
     agents.DISABLED: ("agents_state_disabled", "disabled"),
+}
+
+#: Result line per :attr:`Change.verb`, shared by ``--agents`` and the menu.
+DONE_LABELS = {
+    "enabled": ("agents_done_enabled", "✓ %s enabled"),
+    "disabled": ("agents_done_disabled", "✓ %s disabled"),
+    "updated": ("agents_done_updated", "✓ %s updated"),
+    "added": ("agents_done_added", "✓ %s added"),
+    "reset": ("agents_done_reset", "✓ %s reset to its built-in definition"),
+    "removed": ("agents_done_removed", "✓ %s removed"),
 }
 
 
@@ -120,6 +133,10 @@ def apply(
     known = {*builtin, *entries}
     if verb != "set" and name not in known:
         raise AgentEditError(f"unknown agent: {name} (known: {' '.join(sorted(known))})")
+    # A new name is written into the space-separated AICP_CLI_ORDER too, and
+    # that value only survives config loading within this charset.
+    if name not in known and not NAME.fullmatch(name):
+        raise AgentEditError(f"invalid agent name: {name!r} (letters, digits, . _ - only)")
 
     candidate = {key: dict(value) for key, value in entries.items()}
     entry = candidate.setdefault(name, {})

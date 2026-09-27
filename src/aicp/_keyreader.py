@@ -14,7 +14,8 @@ So :func:`is_interactive` is checked BEFORE any raw-mode call, and
 an empty read is ``"quit"``, never a wait.
 
 Key names returned are semantic (``up``/``down``/``left``/``right``/
-``enter``/``quit``/``reset``/``yes``/``other``) so the menu never sees a byte.
+``enter``/``space``/``quit``/``reset``/``yes``/``top``/``edit``/``add``/
+``other``) so the menu never sees a byte.
 """
 
 from __future__ import annotations
@@ -74,6 +75,10 @@ def _classify(text: str) -> str:
         "right": "right", "l": "right",
         "r": "reset",
         "y": "yes",
+        "space": "space",
+        "t": "top",
+        "e": "edit",
+        "a": "add",
     }.get(lowered, "enter" if lowered in ("enter", "\n") else "other")
 
 
@@ -114,17 +119,15 @@ def _read_key_windows() -> str:
 
 
 def _from_char(ch: str) -> str:
-    if ch in ("\r", "\n", " "):
+    if ch in ("\r", "\n"):
         return "enter"
     # Raw mode disables ISIG, so Ctrl+C arrives as a byte rather than a
     # signal — cancelling a menu changed nothing and is not a failure.
     if ch in ("q", "Q", "\x03", "\x04", ""):
         return "quit"
-    if ch in ("r", "R"):
-        return "reset"
-    if ch in ("y", "Y"):
-        return "yes"
-    return "other"
+    return {" ": "space", "r": "reset", "y": "yes", "t": "top", "e": "edit", "a": "add"}.get(
+        ch.lower(), "other"
+    )
 
 
 @contextlib.contextmanager

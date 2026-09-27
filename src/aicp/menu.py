@@ -46,7 +46,7 @@ import io
 import os
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
@@ -465,7 +465,7 @@ def _agents_lines(state: MenuState, selected: int, message: str | None = None) -
     :func:`render_table` gets for free and a two-column ``(label, value)``
     panel does not.
     """
-    rows = _agent_rows(state)
+    rows = _ordered_agents(state)
     exec_w = max((width(row.executable) for row in rows), default=0)
     state_w = max(width(_t(state.lang, *msg)) for msg in agentcfg.STATE_LABELS.values())
     body: list[tuple[str, str]] = []
@@ -478,70 +478,317 @@ def _agents_lines(state: MenuState, selected: int, message: str | None = None) -
         state_label = _t(state.lang, *agentcfg.STATE_LABELS[row.state])
         pad = " " * (exec_w - width(row.executable))
         state_pad = " " * (state_w - width(state_label))
-        value = f"{color}{mark}{RESET} {row.executable}{pad}  {DIM}{state_label}{state_pad}{RESET}"
+        # A fixed two-column slot, so moving #1 never re-measures the panel.
+        first = f"{CYAN}#1{RESET}" if i == 1 and row.state != agents.DISABLED else "  "
+        value = (
+            f"{color}{mark}{RESET} {row.executable}{pad}  {DIM}{state_label}{state_pad}{RESET}  {first}"
+        )
         body.append((label, value))
     notes = [message] if message else []
-    notes.append(
-        f"{DIM}" + _t(state.lang, "agents_tui_keys", "↑↓ select · ⏎ toggle on/off · q back") + f"{RESET}"
-    )
+    notes += [
+        f"{DIM}"
+        + _t(state.lang, "agents_tui_keys", "↑↓ select · ←→ move · t to #1 · space on/off")
+        + f"{RESET}",
+        f"{DIM}"
+        + _t(state.lang, "agents_tui_keys2", "e edit · a add · r reset · ⏎ actions · q back")
+        + f"{RESET}",
+    ]
     return render_panel(body, _t(state.lang, "config_agents", "Agents"), CYAN, notes=notes)
 
 
-def _agents_tui(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
-    """Arrow-key loop opened by the Agents row: ↑↓ moves, ⏎/←/→ toggles the
-    highlighted agent on/off through :func:`agentcfg.apply` — saved
-    immediately, same as every other row — and q leaves. Returns the last
-    frame it drew; the caller must erase that many rows *plus* the parent
-    panel still sitting above it, then redraw the parent once — erasing only
-    this frame leaves the old parent on screen and the next Enter stacks
-    another copy.
-    """
+#: The Agents sub-panel's actions: the key each one dispatches, the hotkey
+#: shown beside it, its label. The ⏎ menu is drawn from this table and
+#: dispatches through the same keys, so menu and hotkeys cannot drift apart.
+AGENT_ACTIONS: tuple[tuple[str, str, tuple[str, str]], ...] = (
+    ("top", "t", ("agents_act_top", "Move to #1")),
+    ("left", "←", ("agents_act_up", "Move up")),
+    ("right", "→", ("agents_act_down", "Move down")),
+    ("space", "space", ("agents_act_toggle", "Turn on/off")),
+    ("edit", "e", ("agents_act_edit", "Edit settings…")),
+    ("reset", "r", ("agents_act_reset", "Reset to built-in")),
+)
+_AGENT_KEYS = {key for key, _hint, _label in AGENT_ACTIONS} | {"add"}
+
+
+def _ordered_agents(state: MenuState) -> list[agents.AgentRow]:
+    """Try order, top to bottom: the chain first, disabled agents last."""
+    rank = {name: i for i, name in enumerate(state.chain)}
+    return sorted(
+        _agent_rows(state),
+        key=lambda row: (row.state == agents.DISABLED, rank.get(row.name, len(rank))),
+    )
+
+
+def _agent_actions_lines(state: MenuState, name: str, selected: int) -> list[str]:
+    body = []
+    for i, (_key, hint, label) in enumerate(AGENT_ACTIONS, start=1):
+        text = f"{'›' if i == selected else ' '} {_t(state.lang, *label)}"
+        if i == selected:
+            text = f"{RESET}{BOLD}{text}{RESET}"
+        body.append((text, f"{DIM}{hint}{RESET}"))
+    notes = [f"{DIM}" + _t(state.lang, "agents_act_keys", "↑↓ select · ⏎ run · q cancel") + f"{RESET}"]
+    title = f"{_t(state.lang, 'config_agents', 'Agents')} ▸ {name}"
+    return render_panel(body, title, CYAN, notes=notes)
+
+
+def _agent_action_menu(state: MenuState, name: str, stdin: IO[str], out: IO[str]) -> str | None:
+    """⏎ on an agent: pick from :data:`AGENT_ACTIONS`. Returns the picked
+    action's key (a hotkey pressed here counts too), or None on q. Erases
+    itself before returning."""
     selected = 1
-    message: str | None = None
-    lines = _agents_lines(state, selected)
+    lines = _agent_actions_lines(state, name, selected)
     for line in lines:
         print(line, file=out)
     while True:
         key = read_key(stdin, out)
+        if key == "up":
+            selected = selected - 1 if selected > 1 else len(AGENT_ACTIONS)
+        elif key == "down":
+            selected = selected + 1 if selected < len(AGENT_ACTIONS) else 1
+        elif key == "enter" or key == "quit" or key in _AGENT_KEYS:
+            out.write(f"\033[{_frame_rows(lines, out)}A\033[J")
+            if key == "enter":
+                return AGENT_ACTIONS[selected - 1][0]
+            return None if key == "quit" else key
+        else:
+            continue
+        out.write(f"\033[{_frame_rows(lines, out)}A\033[J")
+        lines = _agent_actions_lines(state, name, selected)
+        for line in lines:
+            print(line, file=out)
+
+
+def _agent_form(
+    state: MenuState,
+    fields: Sequence[str],
+    current: dict[str, str] | None,
+    stdin: IO[str],
+    out: IO[str],
+    taken: Collection[str] = (),
+) -> tuple[dict[str, str] | None, int]:
+    """One typed line per field. With *current*, ⏎ keeps a value and only the
+    fields that changed come back; without it every field but
+    ``config_dir_env`` is required and is asked again until answered — as is
+    a ``name`` that is malformed or already in *taken*.
+    Returns ``(answers, rows printed)``; answers is None when EOF or Ctrl+C
+    cut the form off, so nothing half-typed is ever applied."""
+    answers: dict[str, str] = {}
+    printed = 0
+    try:
+        for field in fields:
+            optional = current is not None or field == "config_dir_env"
+            while True:
+                if current is not None:
+                    hint = f" {DIM}[{current.get(field, '')}]{RESET}"
+                elif optional:
+                    hint = f" {DIM}({_t(state.lang, 'agents_form_optional', 'optional')}){RESET}"
+                else:
+                    hint = ""
+                prompt = f"  {field:<14}{hint}: "
+                print(prompt, end="", file=out)
+                out.flush()
+                answer = read_line(stdin)
+                printed += _frame_rows([prompt + (answer or "")], out)
+                if answer is None:
+                    print(file=out)
+                    return None, printed
+                if field == "name" and answer:
+                    # Refused here, before six more fields are typed for nothing.
+                    if answer in taken:
+                        problem = _t(state.lang, "agents_add_exists", "✗ %s already exists — select it and press e", answer)
+                    elif not agentcfg.NAME.fullmatch(answer):
+                        problem = _t(state.lang, "agents_bad_name", "✗ use letters, digits, . _ - only")
+                    else:
+                        break
+                    print(f"  {RED}{problem}{RESET}", file=out)
+                    printed += _frame_rows([f"  {problem}"], out)
+                    continue
+                if answer or optional:
+                    break
+            if answer and (current is None or answer != current.get(field)):
+                answers[field] = answer
+    except KeyboardInterrupt:
+        print(file=out)
+        return None, printed + 1
+    return answers, printed
+
+
+def _agent_values(name: str) -> dict[str, str]:
+    """*name*'s effective fields as the form shows them: lists comma-joined."""
+    path = agents.user_registry_path()
+    merged = agents.merge_entries(
+        agents.load_agents(agents.BUILTIN_PATH), agents.read_user_entries(path), path
+    )
+    agent = merged[name]
+    values = {}
+    for field in agentcfg.EDITABLE:
+        value = getattr(agent, field)
+        values[field] = ",".join(value) if isinstance(value, tuple) else value
+    return values
+
+
+def _apply_agent(state: MenuState, verb: str, name: str, assignments: Sequence[str] = ()) -> str:
+    """Run one :func:`agentcfg.apply` edit and resync the session with it."""
+    try:
+        change = agentcfg.apply(verb, name, assignments, config_path=state.path)
+    except agentcfg.AgentEditError as exc:
+        return f"{RED}✗ {exc}{RESET}"
+    # The roster this session was built from just changed, so every cached
+    # view of it is stale — including the chain, which would otherwise be
+    # persisted by the next move with a name that no longer resolves.
+    state.chain = [n for n in state.chain if n in change.names] + [
+        n for n in change.names if n not in state.chain
+    ]
+    state.agent_rows = None
+    state.skills_status = None
+    state.health = None
+    message = f"{GREEN}{_t(state.lang, *agentcfg.DONE_LABELS[change.verb], change.name)}{RESET}"
+    if change.pruned:
+        message += f"{DIM} · " + _t(
+            state.lang, "agents_pruned", "  dropped from the saved CLI order: %s", " ".join(change.pruned)
+        ).strip() + RESET
+    return message
+
+
+def _move_agent(state: MenuState, name: str, key: str) -> str | None:
+    """←/→ swap *name* with its neighbour, ``top`` with #1; saved at once.
+    A disabled agent has no place in the chain, so it does not move."""
+    if name not in state.chain:
+        return None
+    i = state.chain.index(name)
+    j = 0 if key == "top" else i - 1 if key == "left" else i + 1
+    if i == j or not 0 <= j < len(state.chain):
+        return None
+    chain = state.chain
+    chain[i], chain[j] = chain[j], chain[i]
+    if persist_key("AICP_CLI_ORDER", " ".join(chain), state.path):
+        state.health = None
+        return None
+    chain[i], chain[j] = chain[j], chain[i]
+    return f"{RED}{_t(state.lang, 'persist_failed', '✗ failed to write %s', state.path)}{RESET}"
+
+
+def _agent_act(
+    state: MenuState,
+    key: str | None,
+    row: agents.AgentRow,
+    stdin: IO[str],
+    out: IO[str],
+    typed: Callable[[], contextlib.AbstractContextManager[None]],
+) -> tuple[str | None, int, str]:
+    """Do what *key* means for *row*. Returns ``(message, rows printed below
+    the frame, name the cursor should land on)``."""
+    lang = state.lang
+    if key in ("top", "left", "right"):
+        return _move_agent(state, row.name, key), 0, row.name
+    if key == "space":
+        verb = "enable" if row.state == agents.DISABLED else "disable"
+        return _apply_agent(state, verb, row.name), 0, row.name
+    if key == "edit":
+        if row.state == agents.DISABLED:
+            return _t(lang, "agents_edit_disabled", "✗ %s is off — turn it on first (space)", row.name), 0, row.name
+        try:
+            current = _agent_values(row.name)
+        except (OSError, ValueError, TypeError) as exc:
+            return f"{RED}✗ {exc}{RESET}", 0, row.name
+        print(_t(lang, "agents_form_edit", "Edit %s — ⏎ keeps a value · Ctrl+C cancels", row.name), file=out)
+        with typed():
+            answers, printed = _agent_form(state, agentcfg.EDITABLE, current, stdin, out)
+        printed += 1
+        if answers is None:
+            return None, printed, row.name
+        if not answers:
+            return f"{DIM}" + _t(lang, "agents_form_unchanged", "nothing changed") + RESET, printed, row.name
+        assignments = [f"{field}={value}" for field, value in answers.items()]
+        return _apply_agent(state, "set", row.name, assignments), printed, row.name
+    if key == "add":
+        print(
+            _t(lang, "agents_form_add", "Add an AI CLI — skills and args are comma-separated · Ctrl+C cancels"),
+            file=out,
+        )
+        taken = {r.name for r in _agent_rows(state)}
+        with typed():
+            answers, printed = _agent_form(state, ("name", *agentcfg.EDITABLE), None, stdin, out, taken)
+        printed += 1
+        if answers is None:
+            return None, printed, row.name
+        name = answers.pop("name")
+        assignments = [f"{field}={value}" for field, value in answers.items()]
+        return _apply_agent(state, "set", name, assignments), printed, name
+    if key == "reset":
+        if row.state == agents.BUILT_IN:
+            message = _t(lang, "agents_nothing_to_reset", "%s has no override — nothing to reset", row.name)
+            return f"{DIM}{message}{RESET}", 0, row.name
+        if row.name in agents.load_agents(agents.BUILTIN_PATH):
+            question = _t(lang, "agents_reset_q", "Reset %s to its built-in definition? [y/N]: ", row.name)
+        else:
+            question = _t(lang, "agents_remove_q", "Remove %s? [y/N]: ", row.name)
+        print(question, end="", file=out)
+        out.flush()
+        with typed():
+            answer = read_line(stdin)
+        printed = _frame_rows([question + (answer or "")], out)
+        if answer is None or answer.lower() not in ("y", "yes"):
+            if answer is None:
+                print(file=out)
+            return None, printed, row.name
+        return _apply_agent(state, "reset", row.name), printed, row.name
+    return None, 0, row.name
+
+
+def _agents_tui(
+    state: MenuState,
+    stdin: IO[str],
+    out: IO[str],
+    typed: Callable[[], contextlib.AbstractContextManager[None]] = contextlib.nullcontext,
+) -> list[str]:
+    """Arrow-key loop opened by the Agents row, listed in try order: ↑↓
+    selects, the :data:`AGENT_ACTIONS` hotkeys (and ``a``) act on the
+    highlighted agent — saved immediately, same as every other row — ⏎ opens
+    the same actions as a menu, q leaves. Returns the last frame it drew;
+    the caller must erase that many rows *plus* the parent panel still
+    sitting above it, then redraw the parent once — erasing only this frame
+    leaves the old parent on screen and the next Enter stacks another copy.
+    """
+    selected = 1
+    lines = _agents_lines(state, selected)
+    for line in lines:
+        print(line, file=out)
+    #: Rows of ours on screen below the parent: the frame, plus whatever a
+    #: form or question printed under it — all erased before the redraw.
+    shown = _frame_rows(lines, out)
+    while True:
+        key = read_key(stdin, out)
         if key == "quit":
             return lines
-        message = None
-        rows = _agent_rows(state)
+        message: str | None = None
+        rows = _ordered_agents(state)
         if key == "up":
             selected = selected - 1 if selected > 1 else len(rows)
         elif key == "down":
             selected = selected + 1 if selected < len(rows) else 1
-        elif key in ("left", "right", "enter"):
+        elif key == "enter" or key in _AGENT_KEYS:
             picked = rows[selected - 1]
-            verb = "enable" if picked.state == agents.DISABLED else "disable"
-            try:
-                change = agentcfg.apply(verb, picked.name, config_path=state.path)
-            except agentcfg.AgentEditError as exc:
-                message = f"{RED}✗ {exc}{RESET}"
-            else:
-                state.chain = [name for name in state.chain if name in change.names] + [
-                    name for name in change.names if name not in state.chain
-                ]
-                state.agent_rows = None
-                state.skills_status = None
-                state.health = None
-                if change.pruned:
-                    message = (
-                        f"{DIM}"
-                        + _t(
-                            state.lang,
-                            "agents_pruned",
-                            "  dropped from the saved CLI order: %s",
-                            " ".join(change.pruned),
-                        )
-                        + f"{RESET}"
-                    )
+            if key == "enter":
+                # The menu draws where the frame was, so the frame is gone.
+                out.write(f"\033[{shown}A\033[J")
+                shown = 0
+                key = _agent_action_menu(state, picked.name, stdin, out)
+            message, printed, focus = _agent_act(state, key, picked, stdin, out, typed)
+            shown += printed
+            rows = _ordered_agents(state)
+            selected = next(
+                (i for i, row in enumerate(rows, start=1) if row.name == focus),
+                min(selected, len(rows)),
+            )
         else:
             continue
-        out.write(f"\033[{_frame_rows(lines, out)}A\033[J")
+        if shown:
+            out.write(f"\033[{shown}A\033[J")
         lines = _agents_lines(state, selected, message)
         for line in lines:
             print(line, file=out)
+        shown = _frame_rows(lines, out)
 
 
 def _config_health(state: MenuState) -> list[tuple[str, str]]:
@@ -874,7 +1121,10 @@ ROWS: tuple[Row, ...] = (
         label=("config_cli_order", "AI CLI order"),
         help=(
             "config_help_cli",
-            "Full fallback order, tried left to right; ←/→ rotates it. Missing CLIs are skipped.",
+            (
+                "Full fallback order, tried left to right; ←/→ rotates it, "
+                "the Agents row moves one at a time. Missing CLIs are skipped."
+            ),
         ),
         value=lambda s: _SEPARATOR.join(s.chain),
         accent=lambda _s: CYAN,
@@ -900,7 +1150,7 @@ ROWS: tuple[Row, ...] = (
         label=("config_agents", "Agents"),
         help=(
             "config_help_agents",
-            "Which AI CLIs aicp knows about. Turn one off, or add your own with --agents set.",
+            "The AI CLIs aicp tries, in order. ⏎ to reorder, turn off, edit or add one.",
         ),
         value=_agents_value,
         accent=lambda _s: CYAN,
@@ -1169,7 +1419,7 @@ def update_prompt(
             key = read_key(stdin, out)
             if key == "quit":
                 return update_check.SKIP
-            if key == "enter":
+            if key in ("enter", "space"):
                 return _UPDATE_ANSWERS[selected - 1]
             if key == "up":
                 selected = selected - 1 if selected > 1 else len(_UPDATE_ANSWERS)
@@ -1375,7 +1625,7 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
                     selected = selected - 1 if selected > 1 else len(ROWS)
                 elif key == "down":
                     selected = selected + 1 if selected < len(ROWS) else 1
-                elif key in ("left", "right", "enter"):
+                elif key in ("left", "right", "enter", "space"):
                     row = ROWS[selected - 1]
                     before = list(state.chain)
                     if _is_doctor(row):
@@ -1391,7 +1641,7 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
                         # leaving it has to walk up parent+child before the
                         # redraw — erasing only the child leaves the old
                         # parent on screen and the next Enter stacks another.
-                        agent_lines = _agents_tui(state, stdin, out)
+                        agent_lines = _agents_tui(state, stdin, out, typed)
                         up = _frame_rows(lines, out) + _frame_rows(agent_lines, out)
                         out.write(f"\033[{up}A\033[J")
                         lines = _panel(state, selected, out)

@@ -299,7 +299,7 @@ def test_the_arrow_key_tui_opens_an_agents_loop_that_toggles_in_place(home):
     down_to_agents = "down\n" * (AGENTS_ROW - 1)
     # Inside the Agents loop: move to the 2nd row, toggle it off, leave the
     # loop, then quit the outer menu.
-    code = _tui(state, io.StringIO(f"{down_to_agents}enter\ndown\nenter\nquit\nquit\n"), io.StringIO())
+    code = _tui(state, io.StringIO(f"{down_to_agents}enter\ndown\nspace\nquit\nquit\n"), io.StringIO())
 
     assert code == 0
     second = agents.inventory(home)[1]
@@ -346,6 +346,165 @@ def test_leaving_agents_erases_the_parent_panel_before_redraw(home):
     assert combined in text or stepped in text, (
         f"expected erase of parent+child ({parent_rows}+{child_rows}); CSI ups: {ups}"
     )
+
+
+# ── Agents sub-panel: reorder, edit, add, reset ─────────────────────────────
+
+
+def _roster(home: Path) -> list[str]:
+    from aicp import agents
+
+    return [row.name for row in agents.inventory(home)]
+
+
+def _agents_session(home: Path, keys: str, *, tail: str = "quit\nquit\n"):
+    """Open the Agents sub-panel from the real ``_tui`` and type *keys* in
+    it. ``tail`` leaves the sub-panel and the menu; pass ``""`` to end on EOF
+    instead, so a form can be cut off mid-way."""
+    from aicp.menu import MenuState, _tui
+
+    state = MenuState(home / ".aicp" / "menu.aicprc", True, True, "en", _roster(home))
+    out = io.StringIO()
+    down_to_agents = "down\n" * (AGENTS_ROW - 1)
+    code = _tui(state, io.StringIO(f"{down_to_agents}enter\n{keys}{tail}"), out)
+    assert code == 0
+    return state, out.getvalue()
+
+
+def _saved_order(home: Path) -> list[str]:
+    cfg = home / ".aicp" / "menu.aicprc"
+    return json.loads(cfg.read_text(encoding="utf-8"))["aicp_cli_order"].split()
+
+
+def _user_agents(home: Path) -> dict:
+    from aicp import agents
+
+    path = agents.user_registry_path(home)
+    return json.loads(path.read_text(encoding="utf-8"))["agents"] if path.exists() else {}
+
+
+def _answers(values: dict[str, str]) -> str:
+    """One typed line per editable field, in the order the form asks."""
+    from aicp.agentcfg import EDITABLE
+
+    return "".join(f"{values.get(field, '')}\n" for field in EDITABLE)
+
+
+def test_the_cursor_follows_an_agent_moved_up_twice(home):
+    names = _roster(home)
+    state, _ = _agents_session(home, "down\ndown\nleft\nleft\n")
+    expected = [names[2], names[0], names[1], *names[3:]]
+    assert state.chain == expected
+    assert _saved_order(home) == expected
+
+
+def test_right_moves_the_selected_agent_down_one(home):
+    names = _roster(home)
+    _agents_session(home, "right\n")
+    assert _saved_order(home) == [names[1], names[0], *names[2:]]
+
+
+@pytest.mark.parametrize("keys", ["left\n", "up\nright\n"], ids=["first-left", "last-right"])
+def test_moving_past_either_end_writes_nothing(home, keys):
+    _agents_session(home, keys)
+    assert not (home / ".aicp" / "menu.aicprc").exists()
+    assert _user_agents(home) == {}
+
+
+def test_a_disabled_agent_has_no_place_in_the_order_to_move(home):
+    last = _roster(home)[-1]
+    state, _ = _agents_session(home, "up\nspace\nleft\nleft\n")
+    assert last not in state.chain
+    assert _user_agents(home) == {last: {"disabled": True}}
+    assert not (home / ".aicp" / "menu.aicprc").exists()
+
+
+def test_t_swaps_the_selected_agent_with_the_first(home):
+    names = _roster(home)
+    _agents_session(home, "down\ndown\nt\n")
+    assert _saved_order(home) == [names[2], names[1], names[0], *names[3:]]
+
+
+def test_the_panel_lists_agents_in_try_order_with_disabled_ones_last(home):
+    import re
+
+    from aicp import agentcfg
+    from aicp.menu import MenuState, _agents_lines
+
+    names = _roster(home)
+    agentcfg.apply("disable", names[0])
+    chain = list(reversed(names[1:]))
+    state = MenuState(home / ".aicp" / "menu.aicprc", True, True, "en", chain)
+    lines = [re.sub(r"\033\[[0-9;]*m", "", line) for line in _agents_lines(state, selected=1)]
+
+    rows = [(n, line) for line in lines for n in [*chain, names[0]] if re.search(rf"\) {n}\b", line)]
+    assert [n for n, _ in rows] == [*chain, names[0]]
+    assert [n for n, line in rows if "#1" in line] == [chain[0]]
+
+
+def test_e_overrides_only_the_field_that_was_typed(home):
+    at = _roster(home).index("claude")
+    _agents_session(home, "down\n" * at + "e\n" + _answers({"executable": "/opt/claude"}))
+    assert _user_agents(home) == {"claude": {"executable": "/opt/claude"}}
+
+
+def test_a_refused_edit_writes_nothing_and_says_why(home):
+    _, out = _agents_session(home, "e\n" + _answers({"args": "--prompt,--yes"}))
+    assert _user_agents(home) == {}
+    assert "args must contain one {prompt} argument" in out
+
+
+def test_a_form_cut_off_by_eof_writes_nothing(home):
+    _agents_session(home, "e\n/opt/claude\n", tail="")
+    assert _user_agents(home) == {}
+
+
+def test_a_adds_a_new_agent_in_full_at_the_end_of_the_chain(home):
+    minimax = {
+        "executable": "minimax",
+        "config_dir": "~/.minimax",
+        "memory_file": "AGENTS.md",
+        "skills_dir": "skills",
+        "skills": "safe-git-push",
+        "args": "--prompt,{prompt},--yes",
+    }
+    state, _ = _agents_session(home, "a\nminimax\n" + _answers(minimax))
+    assert _user_agents(home) == {
+        "minimax": {**minimax, "skills": ["safe-git-push"], "args": ["--prompt", "{prompt}", "--yes"]}
+    }
+    assert state.chain[-1] == "minimax"
+
+
+def test_a_rejects_a_bad_or_taken_name_before_asking_the_other_fields(home):
+    fields = _answers({"executable": "x", "config_dir": "~/.x", "memory_file": "AGENTS.md",
+                       "skills_dir": "skills", "skills": "commit", "args": "{prompt}"})
+    _agents_session(home, "a\nmy agent\nclaude\nminimax\n" + fields)
+    assert set(_user_agents(home)) == {"minimax"}
+
+
+@pytest.mark.parametrize(("answer", "kept"), [("y", False), ("n", True), ("", True)])
+def test_r_asks_before_dropping_an_override(home, answer, kept):
+    from aicp import agentcfg
+
+    agentcfg.apply("set", "claude", ["executable=/opt/claude"])
+    at = _roster(home).index("claude")
+    _agents_session(home, "down\n" * at + f"r\n{answer}\n")
+    assert ("claude" in _user_agents(home)) is kept
+
+
+def test_r_on_an_agent_with_no_override_says_there_is_nothing_to_reset(home):
+    _, out = _agents_session(home, "r\n")
+    assert "nothing to reset" in out
+    assert _user_agents(home) == {}
+
+
+def test_enter_opens_an_action_menu_whose_items_do_what_their_hotkeys_do(home):
+    from aicp.menu import AGENT_ACTIONS
+
+    names = _roster(home)
+    item = [key for key, _hint, _label in AGENT_ACTIONS].index("left")
+    _agents_session(home, "down\nenter\n" + "down\n" * item + "enter\n")
+    assert _saved_order(home) == [names[1], names[0], *names[2:]]
 
 
 # ── CI safety: neither row blocks on a pipe ──────────────────────────────────

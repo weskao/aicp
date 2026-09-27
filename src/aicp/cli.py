@@ -347,15 +347,7 @@ def _agents(argv: Sequence[str]) -> int:
     except agentcfg.AgentEditError as exc:
         print(f"{RED}✗ {exc}{RESET}", file=sys.stderr)
         return 1
-    done = {
-        "enabled": ("agents_done_enabled", "✓ %s enabled"),
-        "disabled": ("agents_done_disabled", "✓ %s disabled"),
-        "updated": ("agents_done_updated", "✓ %s updated"),
-        "added": ("agents_done_added", "✓ %s added"),
-        "reset": ("agents_done_reset", "✓ %s reset to its built-in definition"),
-        "removed": ("agents_done_removed", "✓ %s removed"),
-    }[change.verb]
-    print(f"{GREEN}{t(*done, change.name)}{RESET}")
+    print(f"{GREEN}{t(*agentcfg.DONE_LABELS[change.verb], change.name)}{RESET}")
     if change.pruned:
         _dim(
             t(
