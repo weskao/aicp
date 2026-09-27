@@ -753,6 +753,12 @@ def _offer_update(started: update_check.Started | None) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     started = _start_update_check()
+    # Bridge config.json's AICP_LANG into i18n.LANGUAGE before building the
+    # parser: --help's text is baked in at build_parser() time via t(), and
+    # argparse exits on -h/--help before _dispatch's own resolve()/export
+    # ever runs — without this, --help stayed English no matter what
+    # --config had persisted.
+    export_settings(config.resolve())
     parser = build_parser()
     raw = sys.argv[1:] if argv is None else argv
     rc = 0
