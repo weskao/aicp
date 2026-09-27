@@ -1,3 +1,22 @@
+## [0.14.0] - 2026-09-27
+
+### 🚀 Features
+
+- **menu:** Add agent row editing and ordering
+
+### 🐛 Bug Fixes
+
+- **cli:** Offer the update prompt on every exit path
+- **runner:** Kill the whole process tree on a Windows timeout
+- **skills:** Harden the state store against hostile or corrupt input
+
+### 📚 Documentation
+
+- Close the Windows timeout and skills security TODO items
+
+### 🧪 Testing
+
+- **runner:** Prove a timed-out .cmd shim orphans its CLI on Windows
 ## [0.13.3] - 2026-09-27
 
 ### 🐛 Bug Fixes
