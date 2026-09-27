@@ -21,7 +21,16 @@ from pathlib import Path
 
 from . import agents, config
 
-__all__ = ["DONE_LABELS", "EDITABLE", "STATE_LABELS", "VERBS", "AgentEditError", "Change", "apply"]
+__all__ = [
+    "DONE_LABELS",
+    "EDITABLE",
+    "STATE_LABELS",
+    "VERBS",
+    "AgentEditError",
+    "Change",
+    "apply",
+    "guess_defaults",
+]
 
 
 class AgentEditError(ValueError):
@@ -38,6 +47,29 @@ EDITABLE = tuple(field.name for field in fields(agents.Agent))
 VERBS = ("list", "enable", "disable", "set", "reset")
 
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+#: Memory-file candidates probed by :func:`guess_defaults`, most likely first.
+MEMORY_CANDIDATES = ("AGENTS.md", "CLAUDE.md", "GEMINI.md")
+
+
+def guess_defaults(name: str) -> dict[str, str]:
+    """A starting point for the add form: probes disk for *name*'s config
+    dir (``~/.config/<name>`` or ``~/.<name>``, whichever exists) and, inside
+    it, a memory file and a ``skill(s)`` dir — so ⏎ can accept every field,
+    same as editing an existing agent. Fields it can't infer (``skills``,
+    ``args``) fall back to the most common built-in values."""
+    xdg, dotdir = Path.home() / ".config" / name, Path.home() / f".{name}"
+    config_dir, resolved = (f"~/.{name}", dotdir) if dotdir.is_dir() and not xdg.is_dir() else (f"~/.config/{name}", xdg)
+    memory_file = next((f for f in MEMORY_CANDIDATES if (resolved / f).is_file()), "AGENTS.md")
+    skills_dir = "skill" if (resolved / "skill").is_dir() and not (resolved / "skills").is_dir() else "skills"
+    return {
+        "executable": name,
+        "config_dir": config_dir,
+        "memory_file": memory_file,
+        "skills_dir": skills_dir,
+        "skills": "commit,safe-git-push",
+        "args": "-p,{prompt}",
+    }
 
 #: Display text per :func:`aicp.agents.inventory` state, as ``(msgid,
 #: english)`` — the menu translates with its live language, the CLI with the

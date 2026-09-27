@@ -233,7 +233,7 @@ CATALOG: dict[str, str] = {
     "agents_act_reset": "還原為內建",
     "agents_act_keys": "↑↓ 選擇 · ⏎ 執行 · q 取消",
     "agents_form_edit": "編輯 %s — ⏎ 保留目前值 · Ctrl+C 取消",
-    "agents_form_add": "新增 AI CLI — skills 與 args 以逗號分隔 · Ctrl+C 取消",
+    "agents_form_add": "新增 AI CLI — ⏎ 接受猜測預設值 · skills 與 args 以逗號分隔 · Ctrl+C 取消",
     "agents_form_optional": "選填",
     "agents_form_unchanged": "沒有任何變更",
     "agents_edit_disabled": "✗ %s 已關閉 — 請先開啟（space）",

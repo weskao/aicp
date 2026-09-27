@@ -715,17 +715,24 @@ def _agent_act(
         return _apply_agent(state, "set", row.name, assignments), printed, row.name
     if key == "add":
         print(
-            _t(lang, "agents_form_add", "Add an AI CLI — skills and args are comma-separated · Ctrl+C cancels"),
+            _t(lang, "agents_form_add", "Add an AI CLI — ⏎ accepts a guessed default · skills and args are comma-separated · Ctrl+C cancels"),
             file=out,
         )
         taken = {r.name for r in _agent_rows(state)}
         with typed():
-            answers, printed = _agent_form(state, ("name", *agentcfg.EDITABLE), None, stdin, out, taken)
+            name_answer, printed = _agent_form(state, ("name",), None, stdin, out, taken)
+            if name_answer is not None:
+                # Probed from disk once the name is known, so the rest of the
+                # form can be accepted with ⏎ like an edit — see guess_defaults.
+                guessed = agentcfg.guess_defaults(name_answer["name"])
+                answers, more = _agent_form(state, agentcfg.EDITABLE, guessed, stdin, out)
+                printed += more
         printed += 1
-        if answers is None:
+        if name_answer is None or answers is None:
             return None, printed, row.name
-        name = answers.pop("name")
-        assignments = [f"{field}={value}" for field, value in answers.items()]
+        name = name_answer["name"]
+        merged = {**guessed, **answers}
+        assignments = [f"{field}={value}" for field, value in merged.items()]
         return _apply_agent(state, "set", name, assignments), printed, name
     if key == "reset":
         if row.state == agents.BUILT_IN:

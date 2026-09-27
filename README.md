@@ -317,7 +317,7 @@ at the bottom), where everything below is one key away and saved at once:
 | `t` | Move it to #1 (trades places, like `--swap-ai`) |
 | `space` | Turn it on / off |
 | `e` | Edit its fields — one prompt per field, `⏎` keeps the current value |
-| `a` | Add a new agent — asks for each field; the name is checked first |
+| `a` | Add a new agent — name first (checked as you type), then one prompt per field with a disk-guessed default, `⏎` accepts it |
 | `r` | Reset an override to the built-in definition, or remove an added agent (asks `[y/N]`) |
 | `⏎` | Open the same actions as a menu, each showing its hotkey |
 
@@ -344,10 +344,14 @@ reset a fallback order you picked on purpose. The last remaining agent can't
 be disabled.
 
 **Adding a new agent** — example: [MiniMax](https://www.minimaxi.com/) CLI.
-Every field is required for a name the built-in registry has never heard of
-(except `config_dir_env`). Names use letters, digits, `.`, `_` and `-` only,
-since they also appear in the space-separated `aicp_cli_order`. In the menu,
-press `a` and answer the prompts; the scripted form is:
+Names use letters, digits, `.`, `_` and `-` only, since they also appear in
+the space-separated `aicp_cli_order`. In the menu, press `a`, type the name,
+then `⏎` through the rest: aicp probes disk for a config dir matching that
+name (`~/.config/<name>` or `~/.<name>`, whichever exists) and, inside it, a
+memory file and a `skill(s)` dir, prefilling every field the same way `e`
+prefills the current value — type over any of them to override. The scripted
+form (every field required, except `config_dir_env`, for a name the built-in
+registry has never heard of) is:
 
 ```sh
 aicp --agents set minimax \
