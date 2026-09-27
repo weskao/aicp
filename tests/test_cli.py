@@ -687,6 +687,33 @@ def test_a_successful_upgrade_prints_no_warning(
     assert "uv tool upgrade" not in capsys.readouterr().err
 
 
+def _console_scripts() -> dict[str, str]:
+    """``[project.scripts]`` from pyproject.toml: name → ``module:func``."""
+    import re
+
+    text = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    section = text.split("[project.scripts]", 1)[1].split("\n[", 1)[0]
+    return dict(re.findall(r'^([\w-]+)\s*=\s*"([^"]+)"', section, re.MULTILINE))
+
+
+@pytest.mark.parametrize("argv", [["--help"], ["-h"], ["--version"], ["--bogus"]])
+@pytest.mark.parametrize("script", sorted(_console_scripts()))
+def test_every_script_offers_the_update_on_every_way_out(script, argv, monkeypatch, capsys):
+    """--help, --version and a usage error get the update prompt too. A new
+    console script that skips main's start/offer flow fails here."""
+    import importlib
+
+    module, func = _console_scripts()[script].split(":")
+    seen: list[str] = []
+    monkeypatch.setattr(cli, "_start_update_check", lambda: seen.append("start") or "started")
+    monkeypatch.setattr(cli, "_offer_update", lambda started: seen.append(f"offer:{started}"))
+    try:
+        getattr(importlib.import_module(module), func)(argv)
+    except SystemExit:
+        pass
+    assert seen == ["start", "offer:started"]
+
+
 # ── wiring contracts ─────────────────────────────────────────────────────────
 
 

@@ -79,15 +79,16 @@ When a newer release is on PyPI, aicp asks after the command finishes:
 **Update now** (runs `uv tool upgrade aicp-cli`), **Skip** (ask again next
 run), or **Skip until next version**. Off a terminal (CI, pipes) it prints a
 one-line hint instead. Turn it off with the **Check for updates** row in
-`aicp --config`.
+`aicp --config`. Every way of running `aicp` gets this — any command,
+`--help`, `--version`, or a mistyped flag.
 
 The mechanism lives in `src/aicp/update_check.py`, stdlib-only, so other
 projects can copy it: `offer(started, ask, cache_path=..., upgrade=[...])`
 acts on the answer, and `ask(found)` is the only part that depends on the UI.
 `fetch_github` covers a tool released as GitHub tags instead of PyPI, and
 `upgrade` can be a callable (`lambda found: [[...], [...]]`) when the
-upgrade takes more than one command — codex-reset-watch's own
-`git+…@vX.Y.Z install` followed by `crw apply-schedule` is one example.
+upgrade takes more than one command — an install step followed by a
+post-install setup step, for example.
 
 ## Set up skills
 

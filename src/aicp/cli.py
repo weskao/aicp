@@ -752,7 +752,17 @@ def _offer_update(started: update_check.Started | None) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """The one flow every way out goes through: the update check starts
+    first and is offered last — after a command, --help/--version, or a
+    usage error alike. A new command added to :func:`_dispatch` gets it free."""
     started = _start_update_check()
+    try:
+        return _main(argv)
+    finally:
+        _offer_update(started)
+
+
+def _main(argv: list[str] | None) -> int:
     # Bridge config.json's AICP_LANG into i18n.LANGUAGE before building the
     # parser: --help's text is baked in at build_parser() time via t(), and
     # argparse exits on -h/--help before _dispatch's own resolve()/export
@@ -761,26 +771,20 @@ def main(argv: list[str] | None = None) -> int:
     export_settings(config.resolve())
     parser = build_parser()
     raw = sys.argv[1:] if argv is None else argv
-    rc = 0
     try:
         args = parser.parse_args(_normalize_argv(raw, parser))
         _reject_orphan_sub_flags(parser, args)
     except SystemExit as exc:  # --help/--version (0), or a bad flag (1)
-        rc = int(exc.code or 0)
-        if rc == 0:
-            _offer_update(started)
-        return rc
+        return int(exc.code or 0)
 
     try:
-        rc = _dispatch(args)
+        return _dispatch(args)
     except KeyboardInterrupt:
         print(
             f"{YELLOW}⚠{RESET} "
             + t("interrupted", "interrupted (Ctrl+C) — aborting, no further steps run")
         )
-        rc = runner.ABORT_RC
-    _offer_update(started)
-    return rc
+        return runner.ABORT_RC
 
 
 if __name__ == "__main__":
