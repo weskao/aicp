@@ -79,6 +79,9 @@ def pinned_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("LC_CTYPE", "en_US.UTF-8")
     monkeypatch.setenv("COLUMNS", "120")
     monkeypatch.delenv("NO_COLOR", raising=False)
+    for key in list(os.environ):
+        if key.startswith("AICP_"):
+            monkeypatch.delenv(key, raising=False)
 
     fake_home = tmp_path / "home"
     fake_home.mkdir()

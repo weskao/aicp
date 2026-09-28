@@ -191,11 +191,12 @@ class Row:
     value: Callable[[MenuState], str]
     accent: Callable[[MenuState], str]
     cycle: Callable[[MenuState, int], str] | None = None
-    #: ``(state, stdin, stdout)`` → the result line(s) it printed, if any.
+    #: ``(state, stdin, stdout)``; a ``returns_to_panel`` action returns
+    #: ``(result line(s), rows printed)`` — see :func:`_export_action`.
     #: Must never block on a non-TTY stdin — ``read_line`` returns ``None``
     #: at EOF and every prompt here reads that as "no", because aicp runs
     #: in CI.
-    action: Callable[[MenuState, IO[str], IO[str]], list[str] | None] | None = None
+    action: Callable[[MenuState, IO[str], IO[str]], tuple[list[str], int] | None] | None = None
     #: An action row whose prompt+result is a one-shot outcome rather than a
     #: report meant to be read (Export/Import; Agents has its own bespoke
     #: sub-panel and never sets this) — the arrow-key TUI erases the row's
@@ -643,42 +644,34 @@ def _agent_form(
     cut the form off, so nothing half-typed is ever applied."""
     answers: dict[str, str] = {}
     printed = 0
-    try:
-        for field in fields:
-            optional = current is not None or field == "config_dir_env"
-            while True:
-                if current is not None:
-                    hint = f" {DIM}[{current.get(field, '')}]{RESET}"
-                elif optional:
-                    hint = f" {DIM}({_t(state.lang, 'agents_form_optional', 'optional')}){RESET}"
+    for field in fields:
+        optional = current is not None or field == "config_dir_env"
+        while True:
+            if current is not None:
+                hint = f" {DIM}[{current.get(field, '')}]{RESET}"
+            elif optional:
+                hint = f" {DIM}({_t(state.lang, 'agents_form_optional', 'optional')}){RESET}"
+            else:
+                hint = ""
+            answer, rows = _prompt_line(f"  {field:<14}{hint}: ", stdin, out)
+            printed += rows
+            if answer is None:
+                return None, printed
+            if field == "name" and answer:
+                # Refused here, before six more fields are typed for nothing.
+                if answer in taken:
+                    problem = _t(state.lang, "agents_add_exists", "✗ %s already exists — select it and press e", answer)
+                elif not agentcfg.NAME.fullmatch(answer):
+                    problem = _t(state.lang, "agents_bad_name", "✗ use letters, digits, . _ - only")
                 else:
-                    hint = ""
-                prompt = f"  {field:<14}{hint}: "
-                print(prompt, end="", file=out)
-                out.flush()
-                answer = read_line(stdin)
-                printed += _frame_rows([prompt + (answer or "")], out)
-                if answer is None:
-                    print(file=out)
-                    return None, printed
-                if field == "name" and answer:
-                    # Refused here, before six more fields are typed for nothing.
-                    if answer in taken:
-                        problem = _t(state.lang, "agents_add_exists", "✗ %s already exists — select it and press e", answer)
-                    elif not agentcfg.NAME.fullmatch(answer):
-                        problem = _t(state.lang, "agents_bad_name", "✗ use letters, digits, . _ - only")
-                    else:
-                        break
-                    print(f"  {RED}{problem}{RESET}", file=out)
-                    printed += _frame_rows([f"  {problem}"], out)
-                    continue
-                if answer or optional:
                     break
-            if answer and (current is None or answer != current.get(field)):
-                answers[field] = answer
-    except KeyboardInterrupt:
-        print(file=out)
-        return None, printed + 1
+                print(f"  {RED}{problem}{RESET}", file=out)
+                printed += _frame_rows([f"  {problem}"], out)
+                continue
+            if answer or optional:
+                break
+        if answer and (current is None or answer != current.get(field)):
+            answers[field] = answer
     return answers, printed
 
 
@@ -799,14 +792,9 @@ def _agent_act(
             question = _t(lang, "agents_reset_q", "Reset %s to its built-in definition? [y/N]: ", row.name)
         else:
             question = _t(lang, "agents_remove_q", "Remove %s? [y/N]: ", row.name)
-        print(question, end="", file=out)
-        out.flush()
         with typed():
-            answer = read_line(stdin)
-        printed = _frame_rows([question + (answer or "")], out)
+            answer, printed = _prompt_line(question, stdin, out)
         if answer is None or answer.lower() not in ("y", "yes"):
-            if answer is None:
-                print(file=out)
             return None, printed, row.name
         return _apply_agent(state, "reset", row.name), printed, row.name
     return None, 0, row.name
@@ -1059,28 +1047,73 @@ def _export_target(text: str) -> Path:
     return path if path.suffix else path.with_suffix(".json")
 
 
-def _export_action(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
+def _prompt_line(prompt: str, stdin: IO[str], out: IO[str]) -> tuple[str | None, int]:
+    """Print *prompt* and read the line typed after it — every prompt a
+    ``--config`` sub-screen asks goes through here.
+
+    Returns ``(answer, rows printed)``; answer is None on EOF or Ctrl+C. The
+    rows include the terminal's own echo of the answer (or ``^C``), which
+    never passes through *out* — counting only what was printed leaves the
+    erase one row short per prompt, and the next redraw stacks a copy of the
+    panel's top border on the leftover row.
+    """
+    print(prompt, end="", file=out)
+    out.flush()
+    try:
+        answer = read_line(stdin)
+    except KeyboardInterrupt:
+        answer, echo = None, "^C"
+    else:
+        echo = answer or ""
+    if answer is None:
+        print(file=out)  # neither EOF nor ^C moves off the prompt's line
+    return answer, _frame_rows([prompt + echo], out)
+
+
+def _ask_path(prompt: str, stdin: IO[str], out: IO[str]) -> tuple[str | None, int]:
+    """:func:`_prompt_line` until a non-empty line comes back, after one blank
+    separator row. Only Ctrl+C (or EOF) cancels — a stray ⏎ re-asks rather
+    than silently backing out."""
+    print(file=out)
+    rows = 1
+    while True:
+        text, asked = _prompt_line(prompt, stdin, out)
+        rows += asked
+        if text is None or text:
+            return text, rows
+
+
+def _settle(out: IO[str], rows: int, messages: list[str]) -> tuple[list[str], int]:
+    """Print a ``returns_to_panel`` action's result line(s) and closing blank
+    row, and return them with the action's total row count."""
+    for message in messages:
+        print(message, file=out)
+    print(file=out)
+    return messages, rows + _frame_rows(messages, out) + 1
+
+
+def _export_action(state: MenuState, stdin: IO[str], out: IO[str]) -> tuple[list[str], int]:
     """Save the current settings to a file.
 
     No secret ever passes through this: this layer's config.json holds only
     timeouts, toggles and the CLI order — nothing a keychain would guard —
     so :func:`~aicp.config.export_payload` needs no filtering.
 
-    Returns the result line(s) it printed (empty when cancelled) — the
-    numbered fallback shows them inline like every other action, and the
-    arrow-key TUI reuses the same strings as the panel note it settles on
-    instead of guessing one out of whatever scrolled past.
+    Returns ``(result line(s), rows printed)`` (no lines when cancelled) —
+    the numbered fallback shows the lines inline like every other action,
+    and the arrow-key TUI erases exactly that many rows, then reuses the
+    same strings as the panel note it settles on instead of guessing one out
+    of whatever scrolled past.
     """
-    print(file=out)
-    print(
+    text, rows = _ask_path(
         _t(
             state.lang,
             "settings_export_q",
-            "Save to? Paste a folder (file is named for you) or a file name [⏎ to cancel]: ",
+            "Save to? Paste a folder (file is named for you) or a file name [Ctrl+C to cancel]: ",
         ),
-        file=out,
+        stdin,
+        out,
     )
-    text = read_line(stdin)
     messages: list[str] = []
     if text:
         target = _export_target(text)
@@ -1095,34 +1128,26 @@ def _export_action(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
             messages.append(
                 f"  {RED}" + _t(state.lang, "settings_export_failed", "✗ could not write %s", target) + RESET
             )
-        for message in messages:
-            print(message, file=out)
-    print(file=out)
-    return messages
+    return _settle(out, rows, messages)
 
 
-def _import_action(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
+def _import_action(state: MenuState, stdin: IO[str], out: IO[str]) -> tuple[list[str], int]:
     """Load settings from a file written by :func:`_export_action`.
 
-    Returns the result line(s) it printed, same contract as
-    :func:`_export_action` — see its docstring.
+    Same return contract as :func:`_export_action` — see its docstring.
     """
-    print(file=out)
-    print(
-        _t(state.lang, "settings_import_q", "Load which file? Paste or drag it here [⏎ to cancel]: "),
-        file=out,
+    text, rows = _ask_path(
+        _t(state.lang, "settings_import_q", "Load which file? Paste or drag it here [Ctrl+C to cancel]: "),
+        stdin,
+        out,
     )
-    text = read_line(stdin)
     if not text:
-        print(file=out)
-        return []
+        return _settle(out, rows, [])
     source = typed_path(text)
     accepted, skipped = import_updates(_read_json_object(source))
     if not accepted:
         message = f"  {RED}" + _t(state.lang, "settings_import_empty", "✗ nothing importable in %s", source) + RESET
-        print(message, file=out)
-        print(file=out)
-        return [message]
+        return _settle(out, rows, [message])
     merged = _read_json_object(state.path)
     merged.update(accepted)
     if not _write_json_private(state.path, merged):
@@ -1131,9 +1156,7 @@ def _import_action(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
             + _t(state.lang, "settings_import_failed", "✗ could not save imported settings to %s", state.path)
             + RESET
         )
-        print(message, file=out)
-        print(file=out)
-        return [message]
+        return _settle(out, rows, [message])
     # Rebuilt from the file we just wrote, exactly like the initial
     # MenuState.from_settings(resolve()) — so a toggle row an import just
     # changed repaints correctly instead of showing the pre-import value.
@@ -1153,10 +1176,7 @@ def _import_action(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
             + _t(state.lang, "settings_import_skipped", "skipped: %s", ", ".join(sorted(skipped)))
             + RESET
         )
-    for message in messages:
-        print(message, file=out)
-    print(file=out)
-    return messages
+    return _settle(out, rows, messages)
 
 
 # ── Telegram: the bot token and chat id ──────────────────────────────────────
@@ -1602,7 +1622,7 @@ def _panel(
                 else _t(
                     state.lang,
                     "config_keys_tui",
-                    "↑↓ select · ←→ change · ⏎ change/run · q/Ctrl-C quit · saves as you go",
+                    "↑↓ select · ←→ change · ⏎ change/run · q/Ctrl+C quit · saves as you go",
                 ),
                 help_budget,
             )
@@ -1908,27 +1928,6 @@ def _frame_rows(lines: list[str], out: IO[str]) -> int:
     return sum(-(-width(line) // columns) or 1 for line in lines)
 
 
-class _Recorder:
-    """Tees writes to *out* while remembering each line printed through it,
-    so a ``returns_to_panel`` action's own output can be erased by its exact
-    row count afterwards — the action itself prints normally and stays
-    unaware it is being watched."""
-
-    def __init__(self, out: IO[str]) -> None:
-        self._out = out
-        self.lines: list[str] = []
-        self._buf = ""
-
-    def write(self, s: str) -> int:
-        self._out.write(s)
-        *complete, self._buf = (self._buf + s).split("\n")
-        self.lines.extend(complete)
-        return len(s)
-
-    def flush(self) -> None:
-        self._out.flush()
-
-
 def _return_to_panel(
     state: MenuState,
     out: IO[str],
@@ -1938,7 +1937,7 @@ def _return_to_panel(
     messages: Sequence[str] = (),
 ) -> list[str]:
     """Erase *parent_lines* plus whatever was drawn below them (a sub-panel,
-    or a ``returns_to_panel`` action's recorded prompt+result), then redraw
+    or a ``returns_to_panel`` action's counted prompt+result), then redraw
     the main panel once in its place — the Agents row's own erase-and-return
     step, shared so a future ``returns_to_panel`` action gets it by setting
     that flag instead of reimplementing the CSI arithmetic.
@@ -2058,15 +2057,13 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
                     if row.action is not None and row.returns_to_panel:
                         # A one-shot outcome (Export/Import), not a report —
                         # same erase-and-return as Agents above, sharing its
-                        # helper: the prompt+result is recorded rather than
-                        # left stacked above yet another fresh panel, and its
-                        # own result line(s) carry over as that panel's note.
-                        recorder = _Recorder(out)
+                        # helper: the action counts its own rows (see _prompt_line)
+                        # rather than leaving them stacked above yet another
+                        # fresh panel, and its result line(s) carry over as
+                        # that panel's note.
                         with typed():
-                            messages = row.action(state, stdin, recorder) or []
-                        lines = _return_to_panel(
-                            state, out, selected, lines, _frame_rows(recorder.lines, out), messages
-                        )
+                            messages, rows = row.action(state, stdin, out)
+                        lines = _return_to_panel(state, out, selected, lines, rows, messages)
                         continue
                     if not _write(state, row, -1 if key == "left" else 1, stdin, out, typed):
                         return 1

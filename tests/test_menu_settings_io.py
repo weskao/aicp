@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from aicp import menu as menu_module
 from aicp.menu import ROWS, config_menu
 
 
@@ -102,11 +103,34 @@ def test_import_reports_skipped_keys_without_writing_them(menu, tmp_path):
     assert json.loads(cfg.read_text(encoding="utf-8"))["aicp_lang"] == "en"
 
 
+class _Keys(io.StringIO):
+    """Serves typed lines; a line that is exactly ``^C`` is Ctrl+C instead."""
+
+    def readline(self, *args):
+        line = super().readline(*args)
+        if line == "^C\n":
+            raise KeyboardInterrupt
+        return line
+
+
 @pytest.mark.parametrize("row", [EXPORT_ROW, IMPORT_ROW])
-def test_cancelling_writes_nothing(menu, row):
-    code, _out, cfg = menu(f"{row}\n\nq\n")
+def test_ctrl_c_cancels_and_writes_nothing(tmp_path, monkeypatch, row):
+    cfg = tmp_path / "menu.aicprc"
+    monkeypatch.setenv("AICP_CONFIG", str(cfg))
+    out = io.StringIO()
+    stdin = _Keys(f"{row}\n^C\nq\n")
+    code = config_menu(stdin=stdin, stdout=out)
     assert code == 0
     assert not cfg.exists()
+    # Cancelled back to the menu, not out of it: the panel is drawn again.
+    assert out.getvalue().count(f"{row}) ") == 2
+
+
+def test_empty_enter_asks_again_instead_of_cancelling(menu, tmp_path):
+    dest = tmp_path / "out.json"
+    _, out, _cfg = menu(f"{EXPORT_ROW}\n\n{dest}\nq\n")
+    assert out.count("Save to?") == 2
+    assert dest.exists()
 
 
 def test_import_reports_when_the_source_has_nothing_importable(menu, tmp_path):
@@ -216,3 +240,43 @@ def test_export_returns_to_the_main_panel_instead_of_stacking_a_new_one(home):
     assert "wrote" in text or "已寫入" in text
     ups = _ups(text)
     assert any(u >= parent_rows for u in ups), f"expected an erase of at least the parent ({parent_rows}); ups: {ups}"
+
+
+class _EchoingTty(io.StringIO):
+    """A stdin that echoes onto *screen* the way a cooked-mode terminal does —
+    the typed line plus its newline, or a bare ``^C`` — none of which passes
+    through the action's own ``out``."""
+
+    def __init__(self, keys: str, screen: io.StringIO) -> None:
+        super().__init__(keys)
+        self._screen = screen
+
+    def readline(self, *args):
+        line = super().readline(*args)
+        if line == "^C\n":
+            self._screen.write("^C")
+            raise KeyboardInterrupt
+        self._screen.write(line)
+        return line
+
+
+@pytest.mark.parametrize(
+    ("action", "keys"),
+    [
+        (menu_module._export_action, "\n{dest}\n"),  # ⏎ re-asks, then a path
+        (menu_module._export_action, "^C\n"),
+        (menu_module._import_action, "{dest}\n"),
+        (menu_module._import_action, "\n^C\n"),
+    ],
+)
+def test_returned_row_count_covers_the_terminal_echo(tmp_path, monkeypatch, action, keys):
+    """The TUI erases exactly the rows an Export/Import reports before it
+    redraws the panel; one row short and a copy of the panel's top border is
+    left stacked above the new one, once per prompt answered."""
+    monkeypatch.setenv("AICP_CONFIG", str(tmp_path / "menu.aicprc"))
+    state = menu_module.MenuState.from_settings(menu_module.resolve())
+    screen = io.StringIO()
+    stdin = _EchoingTty(keys.format(dest=tmp_path / "out.json"), screen)
+    _messages, rows = action(state, stdin, screen)
+    drawn = screen.getvalue().split("\n")[:-1]  # the cursor sits on the empty last row
+    assert rows == menu_module._frame_rows(drawn, screen)
