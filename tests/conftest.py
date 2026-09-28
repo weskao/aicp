@@ -45,6 +45,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import telegram_kit
 
 from aicp import telegram_store
 
@@ -102,13 +103,16 @@ def _isolate_real_credential_store(monkeypatch):
     the same lesson ``pinned_environment``'s ``TG_BOT_TOKEN``/``TG_CHAT_ID``
     clearing already encodes for the environment-variable path.
 
-    Only ``telegram_store._store`` (the ``CredentialStore`` instance) is
-    swapped — ``available()``/``backend_label()`` are left pointing at the
-    real ``telegram_kit.backend()`` probe, since those never read or write a
-    secret, only report which backend exists on this machine's PATH. A test
-    that needs to simulate "no credential store" patches
-    ``telegram_kit.backend`` itself, locally (see ``test_menu_telegram.py``).
+    ``telegram_kit.backend`` is also pinned to a fixed non-``None`` value —
+    without this, ``available()`` probes the real machine, so these tests
+    passed on a dev box with a keychain/libsecret helper on PATH but failed
+    in CI, where no such backend exists. A test that needs to simulate "no
+    credential store" re-patches ``telegram_kit.backend`` itself, locally
+    (see ``test_menu_telegram.py``); monkeypatch applies that override on
+    top of this one.
     """
+
+    monkeypatch.setattr(telegram_kit, "backend", lambda: "keychain")
 
     class _FakeCredentialStore:
         """Mirrors the real ``CredentialStore``'s own availability guard —
