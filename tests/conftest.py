@@ -10,6 +10,8 @@ port.
 
 - ``pinned_environment`` (autouse)      — every task; deterministic locale/
   width/isolation, no opt-in required.
+- ``_isolate_real_credential_store`` (autouse) — every task; no test may ever
+  read or write this developer's real ``aicp`` keychain/libsecret/DPAPI item.
 - ``git_repo``                          — T2 (runner), T4 (git-verified
   result summary): a throwaway repo with one commit, nothing pending.
 - ``git_repo_synced``                   — T4 primarily: repo + a real bare
@@ -43,6 +45,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from aicp import telegram_store
 
 # ── locale / width / isolation (autouse — every task gets this for free) ────
 
@@ -84,6 +88,61 @@ def pinned_environment(tmp_path, monkeypatch):
     monkeypatch.delenv("TG_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TG_CHAT_ID", raising=False)
     yield fake_home
+
+
+@pytest.fixture(autouse=True)
+def _isolate_real_credential_store(monkeypatch):
+    """Back ``aicp.telegram_store`` with an in-memory fake, not the real
+    keychain/libsecret/DPAPI.
+
+    ``aicp.notify`` now reads the bot token and chat id through this store
+    before falling back to the environment, so any test that calls
+    ``notify()`` (or drives the ``--config`` menu's Telegram rows) without
+    this would read or write this developer's own ``aicp`` credential item —
+    the same lesson ``pinned_environment``'s ``TG_BOT_TOKEN``/``TG_CHAT_ID``
+    clearing already encodes for the environment-variable path.
+
+    Only ``telegram_store._store`` (the ``CredentialStore`` instance) is
+    swapped — ``available()``/``backend_label()`` are left pointing at the
+    real ``telegram_kit.backend()`` probe, since those never read or write a
+    secret, only report which backend exists on this machine's PATH. A test
+    that needs to simulate "no credential store" patches
+    ``telegram_kit.backend`` itself, locally (see ``test_menu_telegram.py``).
+    """
+
+    class _FakeCredentialStore:
+        """Mirrors the real ``CredentialStore``'s own availability guard —
+        every method refuses exactly when ``telegram_store.available()``
+        (itself ``telegram_kit.backend() is not None``) says there is no
+        backend, so a test that patches ``telegram_kit.backend`` to simulate
+        "no credential store" (see ``test_menu_telegram.py``'s
+        ``no_credential_store`` fixture) sees this fake refuse too — a fake
+        that always succeeded regardless of availability could never
+        exercise that refuse-rather-than-silently-succeed path at all.
+        """
+
+        def __init__(self) -> None:
+            self.slots: dict[str, str] = {}
+
+        def get(self, key: str) -> str:
+            if not telegram_store.available():
+                return ""
+            return self.slots.get(key, "")
+
+        def set(self, key: str, value: str) -> bool:
+            if not value:
+                return self.delete(key)
+            if not telegram_store.available():
+                return False
+            self.slots[key] = value
+            return True
+
+        def delete(self, key: str) -> bool:
+            if not telegram_store.available():
+                return False
+            return self.slots.pop(key, None) is not None
+
+    monkeypatch.setattr(telegram_store, "_store", _FakeCredentialStore())
 
 
 # ── git repo fixtures ─────────────────────────────────────────────────────────
