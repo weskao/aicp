@@ -20,7 +20,12 @@ from __future__ import annotations
 import telegram_kit
 
 from aicp import telegram_store
-from aicp.notify import notify
+from aicp.config import TELEGRAM_CHAT_ID_KEY
+from aicp.notify import CHAT_ID_ENV, notify
+
+
+def test_the_chat_id_is_read_under_the_key_the_menu_writes() -> None:
+    assert CHAT_ID_ENV == TELEGRAM_CHAT_ID_KEY
 
 # ── the send path ────────────────────────────────────────────────────────────
 
@@ -78,7 +83,7 @@ def test_a_stored_credential_is_used_over_the_environment(monkeypatch) -> None:
     monkeypatch.setenv("TG_BOT_TOKEN", "stale-env-token")
     monkeypatch.setenv("TG_CHAT_ID", "stale-env-chat")
     telegram_store.set(telegram_store.TOKEN_KEY, "configured-token")
-    telegram_store.set(telegram_store.CHAT_ID_KEY, "configured-chat")
+    monkeypatch.setenv(CHAT_ID_ENV, "configured-chat")  # config.json, via cli.export_settings
     calls = []
     monkeypatch.setattr(
         telegram_kit,

@@ -29,9 +29,11 @@ later used AS a command or a path. Hence three more layers:
    a key is written ``aicp_do_commit``, matching the environment's
    ``AICP_DO_COMMIT`` only once case-folded on read — see
    :func:`_read_json_object`). A line naming ``PATH`` is inert text to this
-   loader, not an assignment. (Telegram credentials, ``TG_BOT_TOKEN`` and
-   ``TG_CHAT_ID``, aren't ``AICP_``-prefixed at all, so they never reach this
-   loader in the first place — see :mod:`aicp.notify`.)
+   loader, not an assignment. (The Telegram chat id is stored here as
+   :data:`TELEGRAM_CHAT_ID_KEY` — ordinary configuration, not a secret. The
+   bot token never is: it lives in :mod:`aicp.telegram_store`, and
+   ``TG_BOT_TOKEN``/``TG_CHAT_ID`` aren't ``AICP_``-prefixed, so they never
+   reach this loader — see :mod:`aicp.notify`.)
 2. **Value charset allowlist** — letters, digits and
    ``/ . _ : @ + -`` plus whitespace. ``=`` and ``,`` are excluded because in
    the zsh original a value like ``PATH=0`` reaching an arithmetic context
@@ -124,6 +126,9 @@ _VALUE_RE = re.compile(r"^[A-Za-z0-9/._:@+\s-]*$")
 _TZ_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$")
 
 _DEFAULT_TZ = "Asia/Taipei"
+#: Where ``--config`` stores the Telegram chat id. The bot token is never
+#: stored in this file — see :mod:`aicp.telegram_store`.
+TELEGRAM_CHAT_ID_KEY = "AICP_TELEGRAM_CHAT_ID"
 _LANGUAGES = ("en", "zh-TW")
 _ROSTER_NAMES: tuple[str, ...] = tuple(c.name for c in ROSTER)
 

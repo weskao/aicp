@@ -12,34 +12,45 @@ a notification is the last step of a run that has usually already succeeded,
 so missing credentials, a network failure or a bad response all degrade to
 the printed line.
 
-**Credentials are resolved per call, configured over environment.** Both are
-read fresh from :mod:`aicp.telegram_store` (the OS credential store — see its
-module docstring) — ``aicp --config``'s two Telegram rows write there — and
-:func:`telegram_kit.resolve_credentials` falls back to ``TG_BOT_TOKEN``/
-``TG_CHAT_ID`` for either one that is not configured, the same names
+**Credentials are resolved per call, configured over environment.** The bot
+token is read fresh from :mod:`aicp.telegram_store` (the OS credential store —
+see its module docstring) and the chat id from ``AICP_TELEGRAM_CHAT_ID`` —
+``aicp --config`` stores it in ``~/.aicp/config.json``, and
+:func:`aicp.cli.export_settings` bridges it into the environment, the same
+way :mod:`aicp.gitflow` gets its knobs without importing the config layer —
+and :func:`telegram_kit.resolve_credentials` falls back to
+``TG_BOT_TOKEN``/``TG_CHAT_ID`` for either one that is not configured, the same names
 ``~/.claude/scripts/tg-send.sh`` already used, so an existing Telegram setup
 still carries over with no reconfiguration. Configured wins over env on
 purpose: a stale ``TG_BOT_TOKEN`` in a shell profile must not keep notifying
-through a bot the user already replaced in ``--config``. Neither value is
-ever read from ``.aicprc``: a config file is a checked-in, shareable
+through a bot the user already replaced in ``--config``. No bot
+token is ever read from a config file: that file is a shareable
 artifact, and a bot token in it would be a leaked secret the moment that
 file is synced or committed.
 """
 
 from __future__ import annotations
 
+import os
+
 import telegram_kit
 
 from ._utils import DIM, RESET
 from .i18n import t
-from .telegram_store import CHAT_ID_KEY, TOKEN_KEY
+from .telegram_store import TOKEN_KEY
 from .telegram_store import get as _get_secret
 
 __all__ = ["notify"]
 
+#: :data:`aicp.config.TELEGRAM_CHAT_ID_KEY`, spelled out: this module must not
+#: import the config layer (``tests/test_gitflow.py`` enforces that).
+CHAT_ID_ENV = "AICP_TELEGRAM_CHAT_ID"
+
 
 def _send(message: str) -> bool:
-    token, chat_id = telegram_kit.resolve_credentials(_get_secret(TOKEN_KEY), _get_secret(CHAT_ID_KEY))
+    token, chat_id = telegram_kit.resolve_credentials(
+        _get_secret(TOKEN_KEY), os.environ.get(CHAT_ID_ENV, "")
+    )
     return telegram_kit.send_message(token, chat_id, message)
 
 

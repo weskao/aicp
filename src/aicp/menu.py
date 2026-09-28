@@ -45,6 +45,7 @@ import contextlib
 import datetime
 import io
 import os
+import re
 import sys
 import time
 from collections.abc import Callable, Collection, Sequence
@@ -64,7 +65,14 @@ from . import (
     telegram_store,
     update_check,
 )
-from ._keyreader import is_interactive, key_session, pending, read_key, read_line
+from ._keyreader import (
+    is_interactive,
+    key_session,
+    pending,
+    read_edit_key,
+    read_key,
+    read_line,
+)
 from ._utils import (
     BLUE,
     BOLD,
@@ -85,6 +93,7 @@ from .config import (
     _KEY_RE,
     _SYSTEM_RESOLVED,
     DENYLIST,
+    TELEGRAM_CHAT_ID_KEY,
     Settings,
     _read_json_object,
     _write_json_private,
@@ -142,10 +151,12 @@ class MenuState:
     skills_status: list[skills.SkillStatus] | None = None
     health: list[tuple[str, str]] | None = None
     agent_rows: list[agents.AgentRow] | None = None
-    #: ``{store key: (value text, accent)}`` for the two Telegram rows — same
-    #: reasoning as the caches above: each read is a subprocess call to the
-    #: credential store, and the panel repaints on every keypress.
-    telegram_status: dict[str, tuple[str, str]] | None = None
+    #: The Telegram chat id as config.json stores it (``""`` when unset).
+    telegram_chat_id: str = ""
+    #: ``(value text, accent)`` for the bot token row — same reasoning as the
+    #: caches above: each read is a subprocess call to the credential store,
+    #: and the panel repaints on every keypress.
+    telegram_token: tuple[str, str] | None = None
 
     @classmethod
     def from_settings(cls, settings: Settings) -> MenuState:
@@ -156,6 +167,7 @@ class MenuState:
             lang=settings.lang,
             chain=list(settings.cli_chain),
             update_check=settings.update_check,
+            telegram_chat_id=settings.values.get(TELEGRAM_CHAT_ID_KEY, ""),
         )
 
 
@@ -192,6 +204,24 @@ class Row:
     #: instead of stacking a new panel below what was just printed. The
     #: numbered fallback ignores this; it always scrolls, by design.
     returns_to_panel: bool = False
+    #: A row whose value is typed rather than cycled — see :class:`TextEdit`.
+    text_edit: TextEdit | None = None
+
+
+@dataclass(frozen=True)
+class TextEdit:
+    """A typed value. The arrow-key TUI edits it in the row itself, the way
+    codex-reset-watch's ``crw --config`` does; the numbered fallback prompts
+    for a line. ``commit`` gets a non-blank answer (``-`` means clear) and
+    returns its result line, or raises ``ValueError`` to reject it."""
+
+    #: What an opened field starts with.
+    seed: Callable[[MenuState], str]
+    commit: Callable[[MenuState, str], str]
+    #: The numbered fallback's prompt, current value included.
+    prompt: Callable[[MenuState], str]
+    #: Typed as bullets, and never prefilled — see :func:`_edit_inline`.
+    secret: bool = False
 
 
 def _on_off(state: MenuState, flag: bool) -> str:
@@ -1127,142 +1157,128 @@ def _import_action(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
 
 
 # ── Telegram: the bot token and chat id ──────────────────────────────────────
-# Both live in aicp.telegram_store (the OS credential store), never in
-# config.json — see that module's docstring for why.
+# The token lives in aicp.telegram_store (the OS credential store), never in
+# config.json; the chat id is ordinary configuration, stored in config.json
+# as TELEGRAM_CHAT_ID_KEY — the same split codex-reset-watch makes.
 
-_TG_ENV_KEYS = {
-    telegram_store.TOKEN_KEY: telegram_kit.TOKEN_ENV,
-    telegram_store.CHAT_ID_KEY: telegram_kit.CHAT_ID_ENV,
-}
+#: A user/group id, or a public channel's @username.
+_CHAT_ID_RE = re.compile(r"-?\d+|@[A-Za-z][A-Za-z0-9_]{4,}")
 
 
-def _telegram_row_status(state: MenuState, key: str, *, mask: bool) -> tuple[str, str]:
-    """A row's ``(value text, accent)``: what is actually stored wins over
-    what the environment supplies — :func:`telegram_kit.resolve_credentials`
-    applies the same precedence at send time — which in turn wins over
-    saying there is nowhere to put a new one."""
-    env_name = _TG_ENV_KEYS[key]
-    stored = telegram_store.get(key)
-    if stored:
-        return (telegram_kit.mask_secret(stored) if mask else stored), GREEN
+def _saved(state: MenuState, cleared: bool) -> str:
+    if cleared:
+        return f"  {GREEN}{_t(state.lang, 'config_telegram_cleared', f'{_OK} cleared')}{RESET}"
+    return f"  {GREEN}{_t(state.lang, 'config_telegram_saved', f'{_OK} saved')}{RESET}"
+
+
+def _telegram_token_status(state: MenuState) -> tuple[str, str]:
+    """``(value text, accent)``: what is stored wins over what the environment
+    supplies — :func:`telegram_kit.resolve_credentials` applies the same
+    precedence at send time — which wins over saying there is nowhere to put
+    a new one. Probed once per session, see :attr:`MenuState.telegram_token`."""
+    if state.telegram_token is None:
+        env_name = telegram_kit.TOKEN_ENV
+        stored = telegram_store.get(telegram_store.TOKEN_KEY)
+        if stored:
+            state.telegram_token = telegram_kit.mask_secret(stored), GREEN
+        elif os.environ.get(env_name, "").strip():
+            state.telegram_token = _t(state.lang, "config_telegram_from_env", "using $%s", env_name), CYAN
+        elif not telegram_store.available():
+            state.telegram_token = (
+                f"{_WARN} " + _t(state.lang, "config_telegram_no_store", "no store — set $%s", env_name),
+                YELLOW,
+            )
+        else:
+            state.telegram_token = _t(state.lang, "config_telegram_not_set", "not set"), DIM
+    return state.telegram_token
+
+
+def _telegram_chat_id_status(state: MenuState) -> tuple[str, str]:
+    if state.telegram_chat_id:
+        return state.telegram_chat_id, GREEN
+    env_name = telegram_kit.CHAT_ID_ENV
     if os.environ.get(env_name, "").strip():
         return _t(state.lang, "config_telegram_from_env", "using $%s", env_name), CYAN
-    if not telegram_store.available():
-        return (
-            f"{_WARN} " + _t(state.lang, "config_telegram_no_store", "no store — set $%s", env_name),
-            YELLOW,
-        )
     return _t(state.lang, "config_telegram_not_set", "not set"), DIM
 
 
-def _telegram_status(state: MenuState) -> dict[str, tuple[str, str]]:
-    """``{key: (value text, accent)}`` for both rows, probed once per
-    session — see :attr:`MenuState.telegram_status`."""
-    if state.telegram_status is None:
-        state.telegram_status = {
-            telegram_store.TOKEN_KEY: _telegram_row_status(state, telegram_store.TOKEN_KEY, mask=True),
-            telegram_store.CHAT_ID_KEY: _telegram_row_status(state, telegram_store.CHAT_ID_KEY, mask=False),
-        }
-    return state.telegram_status
+def _commit_token(state: MenuState, text: str) -> str:
+    if text == "-":
+        telegram_store.delete(telegram_store.TOKEN_KEY)
+        state.telegram_token = None
+        return _saved(state, cleared=True)
+    if telegram_store.set(telegram_store.TOKEN_KEY, text):
+        state.telegram_token = None
+        return _saved(state, cleared=False)
+    return (
+        f"  {RED}"
+        + _t(
+            state.lang,
+            "config_telegram_save_failed",
+            f"{_WARN} could not store securely (no credential store) — set $%s instead",
+            telegram_kit.TOKEN_ENV,
+        )
+        + RESET
+    )
 
 
-def _telegram_token_value(state: MenuState) -> str:
-    return _telegram_status(state)[telegram_store.TOKEN_KEY][0]
+def _commit_chat_id(state: MenuState, text: str) -> str:
+    value = "" if text == "-" else text
+    if value and not _CHAT_ID_RE.fullmatch(value):
+        raise ValueError(
+            _t(
+                state.lang,
+                "config_telegram_chat_id_invalid",
+                f"{_WARN} a chat ID is a number (e.g. -1001234567890) or an @channel name",
+            )
+        )
+    if not persist_key(TELEGRAM_CHAT_ID_KEY, value, state.path):
+        return f"  {RED}{_t(state.lang, 'persist_failed', '✗ failed to write %s', state.path)}{RESET}"
+    state.telegram_chat_id = value
+    state.health = None  # Doctor reports on the file just written
+    return _saved(state, cleared=not value)
 
 
-def _telegram_token_accent(state: MenuState) -> str:
-    return _telegram_status(state)[telegram_store.TOKEN_KEY][1]
+def _token_prompt(state: MenuState) -> str:
+    return _t(
+        state.lang,
+        "config_telegram_token_prompt",
+        "Bot token [%s] (⏎ to keep, '-' to clear): ",
+        _telegram_token_status(state)[0],
+    )
 
 
-def _telegram_chat_id_value(state: MenuState) -> str:
-    return _telegram_status(state)[telegram_store.CHAT_ID_KEY][0]
+def _chat_id_prompt(state: MenuState) -> str:
+    return _t(
+        state.lang,
+        "config_telegram_chat_id_prompt",
+        "Chat ID [%s] (⏎ to keep, '-' to clear): ",
+        _telegram_chat_id_status(state)[0],
+    )
 
 
-def _telegram_chat_id_accent(state: MenuState) -> str:
-    return _telegram_status(state)[telegram_store.CHAT_ID_KEY][1]
-
-
-def _telegram_edit(
-    state: MenuState,
-    stdin: IO[str],
-    out: IO[str],
-    *,
-    key: str,
-    mask: bool,
-    prompt: str,
-) -> list[str]:
-    """Shared flow for both Telegram rows.
-
-    ⏎ keeps the stored value unchanged — the same "no bare-Enter clear" rule
-    ai-accounts' own masked fields follow, so an unrelated Enter can never
-    wipe a real credential — ``-`` clears it, anything else is stored.
-    Returns the result line it printed (empty when kept unchanged), same
-    ``returns_to_panel`` contract as Export/Import.
-
-    *prompt* is already rendered by the caller, not a ``(msgid, english)``
-    pair taken here: ``tests/test_i18n.py``'s static collector only resolves
-    a ``_t()`` call whose msgid argument is a literal, and this row's current
-    value is only known once :func:`_telegram_status` has run.
-    """
-    env_name = _TG_ENV_KEYS[key]
-    print(prompt, end="", file=out)
+def _text_edit_fallback(state: MenuState, edit: TextEdit, stdin: IO[str], out: IO[str]) -> None:
+    """The numbered menu's half of a :class:`TextEdit`: ⏎ keeps the current
+    value — an unrelated Enter can never wipe a real credential — ``-``
+    clears it, anything else is committed."""
+    print(edit.prompt(state), end="", file=out)
     out.flush()
     answer = None
-    if mask:
-        # getpass opens /dev/tty directly on POSIX, bypassing *stdin*
-        # entirely — this only ever succeeds on a real controlling terminal
-        # (the arrow-key TUI's own surface). The numbered fallback, every
-        # test in this suite, and any real CI run all have no controlling
-        # tty, so this degrades to None immediately and never blocks on a
-        # human who was never going to type anything.
+    if edit.secret:
+        # getpass opens /dev/tty directly on POSIX, bypassing *stdin*: this
+        # only succeeds on a real controlling terminal, and degrades to None
+        # immediately in CI and under the test suite.
         answer = telegram_kit.read_hidden("")
     if answer is None:
         answer = read_line(stdin)
     print(file=out)
-    if not answer:  # None (EOF) or "" (blank ⏎): keep the stored value as-is
-        return []
-    if answer == "-":
-        telegram_store.delete(key)
-        state.telegram_status = None
-        message = f"  {GREEN}{_t(state.lang, 'config_telegram_cleared', f'{_OK} cleared')}{RESET}"
-        print(message, file=out)
-        return [message]
-    if telegram_store.set(key, answer):
-        state.telegram_status = None
-        message = f"  {GREEN}{_t(state.lang, 'config_telegram_saved', f'{_OK} saved')}{RESET}"
-    else:
-        message = (
-            f"  {RED}"
-            + _t(
-                state.lang,
-                "config_telegram_save_failed",
-                f"{_WARN} could not store securely (no credential store) — set $%s instead",
-                env_name,
-            )
-            + RESET
-        )
+    if not answer or not answer.strip():
+        return
+    try:
+        message = edit.commit(state, answer.strip())
+    except ValueError as exc:
+        message = f"  {RED}{exc}{RESET}"
     print(message, file=out)
-    return [message]
-
-
-def _telegram_token_action(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
-    prompt = _t(
-        state.lang,
-        "config_telegram_token_prompt",
-        "Bot token [%s] (⏎ to keep, '-' to clear): ",
-        _telegram_status(state)[telegram_store.TOKEN_KEY][0],
-    )
-    return _telegram_edit(state, stdin, out, key=telegram_store.TOKEN_KEY, mask=True, prompt=prompt)
-
-
-def _telegram_chat_id_action(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
-    prompt = _t(
-        state.lang,
-        "config_telegram_chat_id_prompt",
-        "Chat ID [%s] (⏎ to keep, '-' to clear): ",
-        _telegram_status(state)[telegram_store.CHAT_ID_KEY][0],
-    )
-    return _telegram_edit(state, stdin, out, key=telegram_store.CHAT_ID_KEY, mask=False, prompt=prompt)
 
 
 #: The menu, in display order. Append to extend — see the module docstring.
@@ -1340,21 +1356,25 @@ ROWS: tuple[Row, ...] = (
         key="",
         group=("config_group_notifications", "Notifications"),
         label=("config_telegram_token", "Telegram bot token"),
-        help=("config_help_telegram_token", "Sent as this bot. ⏎ to keep, '-' to clear."),
-        value=_telegram_token_value,
-        accent=_telegram_token_accent,
-        action=_telegram_token_action,
-        returns_to_panel=True,
+        help=(
+            "config_help_telegram_token",
+            "Sent as this bot. Kept in the OS credential store, never in a file.",
+        ),
+        value=lambda s: _telegram_token_status(s)[0],
+        accent=lambda s: _telegram_token_status(s)[1],
+        text_edit=TextEdit(seed=lambda _s: "", commit=_commit_token, prompt=_token_prompt, secret=True),
     ),
     Row(
-        key="",
+        key=TELEGRAM_CHAT_ID_KEY,
         group=None,
         label=("config_telegram_chat_id", "Telegram chat ID"),
-        help=("config_help_telegram_chat_id", "Where notifications are sent. ⏎ to keep, '-' to clear."),
-        value=_telegram_chat_id_value,
-        accent=_telegram_chat_id_accent,
-        action=_telegram_chat_id_action,
-        returns_to_panel=True,
+        help=(
+            "config_help_telegram_chat_id",
+            "Where notifications go: a number or an @channel. Stored in config.json.",
+        ),
+        value=lambda s: _telegram_chat_id_status(s)[0],
+        accent=lambda s: _telegram_chat_id_status(s)[1],
+        text_edit=TextEdit(seed=lambda s: s.telegram_chat_id, commit=_commit_chat_id, prompt=_chat_id_prompt),
     ),
     # Rows, not subcommands: only `aicp` and `aicp --config` are ever meant to
     # be memorised, so skills management and the health check live here.
@@ -1479,6 +1499,7 @@ def _panel(
     out: IO[str] | None = None,
     order_value: str | None = None,
     messages: Sequence[str] = (),
+    editing: str | None = None,
 ) -> list[str]:
     """The framed settings box, numbered for the typed-choice surface.
 
@@ -1501,6 +1522,10 @@ def _panel(
     order row (see :func:`_order_motion`); everything else about the panel is
     drawn exactly as it is at rest, so a frame mid-slide is the same shape as
     the frame it settles into.
+
+    ``editing`` is the text being typed into the selected row's value column
+    (see :func:`_edit_inline`) — shown as bullets for a secret, and trimmed
+    from the left so the caret stays in view.
     """
     out = out if out is not None else sys.stdout
     frame_columns, value_columns = _fit_columns(state, out)
@@ -1515,6 +1540,11 @@ def _panel(
             if order_value is not None and row.key == "AICP_CLI_ORDER"
             else _fit(row.value(state), value_columns)
         )
+        accent = row.accent(state)
+        if editing is not None and selected == i and row.text_edit is not None:
+            shown = ("•" * len(editing) if row.text_edit.secret else editing) + "▏"
+            value = shown if width(shown) <= value_columns else _ELLIPSIS + shown[-(value_columns - 1) :]
+            accent = GREEN
         label = f"{marker} {i:>{_NUM_WIDTH}}) {_t(state.lang, *row.label)}"
         # The cursor row stands out by weight, not a new hue: RESET cancels
         # render_panel's own DIM before BOLD applies, matching the group
@@ -1525,7 +1555,7 @@ def _panel(
         rows.append(
             (
                 label,
-                f"{row.accent(state)}{value}{RESET}",
+                f"{accent}{value}{RESET}",
             )
         )
     title = f"{_t(state.lang, 'config_title', 'aicp config')} (v{__version__})"
@@ -1552,6 +1582,12 @@ def _panel(
             f"{DIM}"
             + _fit(
                 _t(
+                    state.lang,
+                    "config_keys_edit",
+                    "type a value · ⏎ save · Esc cancel · '-' then ⏎ clears",
+                )
+                if editing is not None
+                else _t(
                     state.lang,
                     "config_keys_tui",
                     "↑↓ select · ←→ change · ⏎ change/run · q/Ctrl-C quit · saves as you go",
@@ -1596,6 +1632,9 @@ def _write(
     out: IO[str],
     typed: Callable[[], contextlib.AbstractContextManager[None]] = contextlib.nullcontext,
 ) -> bool:
+    if row.text_edit is not None:  # numbered fallback only; the TUI edits inline
+        _text_edit_fallback(state, row.text_edit, stdin, out)
+        return True
     if row.action is not None:
         # An action row asks its questions with read_line, which needs the
         # line discipline the arrow-key session holds suspended.
@@ -1900,6 +1939,64 @@ def _return_to_panel(
     return lines
 
 
+def _redraw(
+    state: MenuState,
+    selected: int,
+    out: IO[str],
+    lines: list[str],
+    messages: Sequence[str] = (),
+    editing: str | None = None,
+) -> list[str]:
+    out.write(f"\033[{_frame_rows(lines, out)}A\033[J")
+    lines = _panel(state, selected, out, messages=messages, editing=editing)
+    for line in lines:
+        print(line, file=out)
+    return lines
+
+
+def _edit_inline(
+    state: MenuState, row: Row, selected: int, stdin: IO[str], out: IO[str], lines: list[str]
+) -> list[str]:
+    """Type *row*'s new value into its own value column, crw ``--config``
+    style. ⏎ commits, Esc cancels, and a rejected value keeps the field open
+    with the reason under it.
+
+    A secret's field opens EMPTY: prefilling would show the token, and
+    committing the mask back would overwrite the real one — so ⏎ on an empty
+    secret field cancels rather than clears, and clearing takes a typed
+    ``-``. A plain field opens prefilled, so emptying it and pressing ⏎
+    clears it (so does ``-``); ⏎ on an unchanged value writes nothing.
+    """
+    edit = row.text_edit
+    assert edit is not None
+    seed = edit.seed(state)
+    buffer = seed
+    messages: list[str] = []
+    while True:
+        lines = _redraw(state, selected, out, lines, messages, editing=buffer)
+        key = read_edit_key(stdin)
+        if key == "escape":
+            messages = []
+            break
+        if key == "enter":
+            text = buffer.strip()
+            if (not text and edit.secret) or (not edit.secret and text == seed):
+                messages = []
+                break
+            try:
+                messages = [edit.commit(state, text or "-")]
+            except ValueError as exc:
+                messages = [f"  {RED}{exc}{RESET}"]
+                continue
+            break
+        if key == "backspace":
+            buffer = buffer[:-1]
+        else:
+            buffer += key
+        messages = []
+    return _redraw(state, selected, out, lines, messages)
+
+
 def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
     """Arrow-key surface. Repaints in place by walking back up the frame it
     just drew; ``\\033[J`` erases to the end of the screen because switching
@@ -1925,6 +2022,9 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
                     if _is_doctor(row):
                         # Details are already expanded in the panel while this
                         # row is highlighted; Enter/←/→ must not reprint them.
+                        continue
+                    if row.text_edit is not None:
+                        lines = _edit_inline(state, row, selected, stdin, out, lines)
                         continue
                     if row.action is _agents_action:
                         # The one action row with its own arrow-key loop: a

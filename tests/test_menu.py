@@ -27,7 +27,7 @@ import pytest
 
 from aicp import menu as menu_module
 from aicp import update_check
-from aicp._keyreader import is_interactive, key_session, read_key
+from aicp._keyreader import is_interactive, key_session, read_edit_key, read_key
 from aicp._utils import BOLD, CYAN, GREEN
 from aicp.config import resolve
 from aicp.contracts import ROSTER
@@ -400,6 +400,45 @@ def test_raw_key_reading_over_a_real_pty(raw_pty, typed, expected):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX termios path")
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        (b"7", "7"),
+        (b"@", "@"),
+        (b"\r", "enter"),
+        (b"\x7f", "backspace"),
+        (b"\x1b", "escape"),  # a bare Esc: nothing follows it
+        (b"\x1b[A", ""),  # an arrow is drained, never typed as "[A"
+        (b"\x03", "escape"),  # Ctrl+C backs out of the field, not the menu
+        (b"\x01", ""),
+    ],
+)
+def test_inline_edit_keys_over_a_real_pty(raw_pty, typed, expected):
+    stream = raw_pty(typed)
+    assert read_edit_key(stream) == expected
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        (["7"], "7"),
+        (["\r"], "enter"),
+        (["\x08"], "backspace"),
+        (["\x1b"], "escape"),
+        (["\xe0", "H"], ""),  # an arrow's two-part code, both halves consumed
+        (["\x03"], "escape"),
+    ],
+)
+def test_inline_edit_keys_on_windows(monkeypatch, typed, expected):
+    """The msvcrt branch, run on every CI OS with a fake console."""
+    feed = iter(typed)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "msvcrt", type("msvcrt", (), {"getwch": staticmethod(lambda: next(feed))}))
+    assert read_edit_key(io.StringIO()) == expected
+    assert next(feed, None) is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX termios path")
 def test_terminal_mode_is_restored_after_a_key_is_read(raw_pty):
     """A shell left in -icanon -echo looks broken to whoever uses it next, so
     the restore is armed before raw mode is ever entered. ECHO is turned back
@@ -446,10 +485,11 @@ def test_non_tty_fallback_is_taken_on_a_real_pipe_fd():
 
 
 def test_rows_are_data_addressed_by_index(menu):
-    # The last seven are appended action rows (Telegram bot token, Telegram
-    # chat ID, Skills, Agents, Doctor, Export settings, Import settings):
-    # they run something instead of persisting a setting, hence no config
-    # key. See test_menu_telegram.py / test_menu_skills.py.
+    # Then the Telegram bot token (kept in the credential store, so no config
+    # key) and chat ID (typed, stored in config.json), and five action rows
+    # (Skills, Agents, Doctor, Export settings, Import settings) that run
+    # something instead of persisting a setting, hence no config key. See
+    # test_menu_telegram.py / test_menu_skills.py.
     assert tuple(row.key for row in ROWS) == (
         "AICP_DO_COMMIT",
         "AICP_DO_PUSH",
@@ -457,7 +497,7 @@ def test_rows_are_data_addressed_by_index(menu):
         "AICP_UPDATE_CHECK",
         "AICP_CLI_ORDER",
         "",
-        "",
+        "AICP_TELEGRAM_CHAT_ID",
         "",
         "",
         "",

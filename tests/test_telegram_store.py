@@ -18,9 +18,8 @@ def test_the_service_name_is_aicp():
     assert telegram_store.SERVICE == "aicp"
 
 
-def test_the_two_keys_match_the_ones_menu_and_notify_use():
+def test_the_token_key_matches_the_one_menu_and_notify_use():
     assert telegram_store.TOKEN_KEY == "telegram_bot_token"
-    assert telegram_store.CHAT_ID_KEY == "telegram_chat_id"
 
 
 def test_set_then_get_round_trips():
@@ -33,9 +32,9 @@ def test_get_on_an_unset_key_is_an_empty_string():
 
 
 def test_an_empty_value_deletes_rather_than_storing_blank():
-    telegram_store.set(telegram_store.CHAT_ID_KEY, "42")
-    assert telegram_store.set(telegram_store.CHAT_ID_KEY, "") is True
-    assert telegram_store.get(telegram_store.CHAT_ID_KEY) == ""
+    telegram_store.set(telegram_store.TOKEN_KEY, "42:x")
+    assert telegram_store.set(telegram_store.TOKEN_KEY, "") is True
+    assert telegram_store.get(telegram_store.TOKEN_KEY) == ""
 
 
 def test_delete_reports_whether_anything_was_removed():

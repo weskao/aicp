@@ -25,7 +25,7 @@ import sys
 from collections.abc import Callable, Iterator
 from typing import IO
 
-__all__ = ["is_interactive", "key_session", "pending", "read_key", "read_line"]
+__all__ = ["is_interactive", "key_session", "pending", "read_edit_key", "read_key", "read_line"]
 
 #: What :func:`key_session` hands back: call it to wrap a prompt that reads a
 #: typed line, which needs the line discipline the session suspends.
@@ -128,6 +128,51 @@ def _from_char(ch: str) -> str:
     return {" ": "space", "r": "reset", "y": "yes", "t": "top", "e": "edit", "a": "add"}.get(
         ch.lower(), "other"
     )
+
+
+def _edit_key(ch: str) -> str:
+    if ch in ("\r", "\n"):
+        return "enter"
+    if ch in ("\x7f", "\x08"):
+        return "backspace"
+    if ch in ("\x1b", "\x03", "\x04", ""):
+        return "escape"
+    return ch if ch.isprintable() else ""
+
+
+def read_edit_key(stdin: IO[str]) -> str:
+    """One keystroke for an inline text field: ``enter``, ``backspace``,
+    ``escape`` (also Ctrl-C/Ctrl-D — backing out of the field, not the menu),
+    ``""`` for a key the field ignores (arrows, control bytes), else the
+    printable character typed. Interactive sessions only — the numbered
+    fallback reads a whole line instead.
+    """
+    if sys.platform == "win32":
+        import msvcrt
+
+        ch = msvcrt.getwch()
+        if ch in _WIN_PREFIXES:
+            msvcrt.getwch()  # the arrow/function key's second half
+            return ""
+        return _edit_key(ch)
+    import os
+    import select
+    import termios
+    import tty
+
+    fd = stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd, termios.TCSANOW)
+        ch = os.read(fd, 1).decode("utf-8", "replace")
+        if ch == "\x1b" and select.select([fd], [], [], 0.05)[0]:
+            # An arrow's ESC [ X arrives as one burst; a bare Esc has nothing
+            # behind it. Drain the sequence so its tail isn't typed as text.
+            os.read(fd, 8)
+            return ""
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+    return _edit_key(ch)
 
 
 @contextlib.contextmanager

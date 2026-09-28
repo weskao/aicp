@@ -456,12 +456,17 @@ in this file to filter: `aicp` stores none.
 | `AICP_SKIP_SECRET_SCAN` | *(unset)* | `1` bypasses the pre-commit secret scan for one run — the documented escape for a false positive. |
 | `AICP_CONFIG` | `~/.aicp/config.json` | Which file this loader reads. Environment-variable only — a file can't rename itself. |
 | `AICP_TIMING_LOG` | `~/.aicp/timing.log` | Where per-CLI timing rows are appended (rotated at 5 MB, 5 kept). **Environment-variable only** — refused if set in `config.json`. |
-| `TG_BOT_TOKEN` | *(unset)* | Telegram bot token used to send the end-of-run notification — sent directly to the Bot API via stdlib HTTP (`telegram_kit`), no external script or project required. Same name `~/.claude/scripts/tg-send.sh` already uses, so an existing setup carries over. Not part of the `AICP_*` config system at all (see below), so it can only ever be a real environment variable. |
-| `TG_CHAT_ID` | *(unset)* | Telegram chat to notify. Same rules as `TG_BOT_TOKEN`. |
+| `AICP_TELEGRAM_CHAT_ID` | *(unset)* | Telegram chat to notify: a number (`-100…` for a group) or an `@channel`. `aicp --config`'s **Telegram chat ID** row writes it here. |
+| `TG_BOT_TOKEN` | *(unset)* | Fallback Telegram bot token for the end-of-run notification — sent directly to the Bot API via stdlib HTTP (`telegram_kit`), no external script or project required. Same name `~/.claude/scripts/tg-send.sh` already uses, so an existing setup carries over. The token set in `aicp --config` (kept in the OS credential store: Keychain / Secret Service / DPAPI, never in a file) wins over it. Not part of the `AICP_*` config system at all (see below), so it can only ever be a real environment variable. |
+| `TG_CHAT_ID` | *(unset)* | Fallback Telegram chat, used when `AICP_TELEGRAM_CHAT_ID` is unset. Same rules as `TG_BOT_TOKEN`. |
 
-Either `TG_BOT_TOKEN` or `TG_CHAT_ID` missing (or the request failing) just
-means the notification prints to the terminal instead — nothing about the
-commit/push run itself depends on it.
+In `aicp --config`, press ⏎ on either Telegram row to type a new value in
+place: ⏎ saves, Esc cancels, `-` then ⏎ clears. The token field opens empty
+and shows `•••` as you type, so ⏎ on an empty field keeps the stored token.
+
+No bot token or no chat ID (or the request failing) just means the
+notification prints to the terminal instead — nothing about the commit/push
+run itself depends on it.
 
 `AICP_TIMING_LOG` is refused from `config.json` on purpose: it names a path
 that then gets *written and rotated* (`mkdir -p` / `>>` / a rename). A config
@@ -470,7 +475,7 @@ dotfiles repo, so anything that becomes a filesystem sink stays a
 real-environment-only decision — set it in your shell, not the file.
 (`TG_BOT_TOKEN`/`TG_CHAT_ID` don't need this treatment: they aren't
 `AICP_`-prefixed, so `config.json` was never able to supply them to begin
-with.)
+with — and the bot token is never written to `config.json` at all.)
 
 ## Safety
 
