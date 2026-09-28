@@ -1,3 +1,17 @@
+## [0.15.0] - 2026-09-28
+
+### 🚀 Features
+
+- **menu:** Split settings export/import into separate rows
+- **agents:** Guess defaults when adding an agent
+- Add aicp's own Telegram credential store
+- **telegram:** Wire credential store into menu and notify
+- **telegram:** [**breaking**] Store chat id in config
+
+### 🐛 Bug Fixes
+
+- **menu:** Stop export/import from stacking panels
+- **tests:** Pin credential-store backend for CI determinism
 ## [0.14.1] - 2026-09-27
 
 ### 💼 Other
