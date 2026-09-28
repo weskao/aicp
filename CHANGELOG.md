@@ -1,3 +1,8 @@
+## [0.16.0] - 2026-09-28
+
+### 🚀 Features
+
+- **telegram:** Cap token/chat id field length in --config
 ## [0.15.0] - 2026-09-28
 
 ### 🚀 Features
@@ -12,11 +17,19 @@
 
 - **menu:** Stop export/import from stacking panels
 - **tests:** Pin credential-store backend for CI determinism
+
+### 📚 Documentation
+
+- **changelog:** Release v0.15.0
 ## [0.14.1] - 2026-09-27
 
 ### 💼 Other
 
 - **deps:** Bump telegram-kit to v0.1.4
+
+### 📚 Documentation
+
+- **changelog:** Release v0.14.1
 ## [0.14.0] - 2026-09-27
 
 ### 🚀 Features
@@ -32,6 +45,7 @@
 ### 📚 Documentation
 
 - Close the Windows timeout and skills security TODO items
+- **changelog:** Release v0.14.0
 
 ### 🧪 Testing
 
@@ -41,16 +55,28 @@
 ### 🐛 Bug Fixes
 
 - **cli:** Resolve --help text in the configured language
+
+### 📚 Documentation
+
+- **changelog:** Release v0.13.3
 ## [0.13.2] - 2026-09-26
 
 ### 🐛 Bug Fixes
 
 - **ci:** Drop --no-index from wheel install validation
+
+### 📚 Documentation
+
+- **changelog:** Release v0.13.2
 ## [0.13.1] - 2026-09-26
 
 ### 💼 Other
 
 - **deps:** Use telegram-kit>=0.1.3 from PyPI
+
+### 📚 Documentation
+
+- **changelog:** Release v0.13.1
 ## [0.13.0] - 2026-09-26
 
 ### 🚀 Features
@@ -65,6 +91,10 @@
 
 - **notify:** [**breaking**] Send via telegram_kit instead of vendored sender
 
+### 📚 Documentation
+
+- **changelog:** Release v0.13.0
+
 ### 🎨 Styling
 
 - **test:** Sort imports in test_notify
@@ -78,6 +108,10 @@
 ### 🐛 Bug Fixes
 
 - **update:** Stop naming a specific version in skip-until wording
+
+### 📚 Documentation
+
+- **changelog:** Release v0.12.0
 ## [0.11.0] - 2026-09-25
 
 ### 🚀 Features
