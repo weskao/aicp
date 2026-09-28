@@ -1,3 +1,12 @@
+## [0.17.0] - 2026-09-28
+
+### 🚀 Features
+
+- **menu:** Add d/D confirm-and-reset keys to --config
+
+### 🐛 Bug Fixes
+
+- **menu:** Keep import/export rows stable
 ## [0.16.1] - 2026-09-28
 ## [0.16.0] - 2026-09-28
 
