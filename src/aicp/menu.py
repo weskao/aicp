@@ -52,7 +52,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from . import __version__, agentcfg, agents, gitflow, i18n, skills, update_check
+import telegram_kit
+
+from . import (
+    __version__,
+    agentcfg,
+    agents,
+    gitflow,
+    i18n,
+    skills,
+    telegram_store,
+    update_check,
+)
 from ._keyreader import is_interactive, key_session, pending, read_key, read_line
 from ._utils import (
     BLUE,
@@ -131,6 +142,10 @@ class MenuState:
     skills_status: list[skills.SkillStatus] | None = None
     health: list[tuple[str, str]] | None = None
     agent_rows: list[agents.AgentRow] | None = None
+    #: ``{store key: (value text, accent)}`` for the two Telegram rows — same
+    #: reasoning as the caches above: each read is a subprocess call to the
+    #: credential store, and the panel repaints on every keypress.
+    telegram_status: dict[str, tuple[str, str]] | None = None
 
     @classmethod
     def from_settings(cls, settings: Settings) -> MenuState:
@@ -1111,6 +1126,145 @@ def _import_action(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
     return messages
 
 
+# ── Telegram: the bot token and chat id ──────────────────────────────────────
+# Both live in aicp.telegram_store (the OS credential store), never in
+# config.json — see that module's docstring for why.
+
+_TG_ENV_KEYS = {
+    telegram_store.TOKEN_KEY: telegram_kit.TOKEN_ENV,
+    telegram_store.CHAT_ID_KEY: telegram_kit.CHAT_ID_ENV,
+}
+
+
+def _telegram_row_status(state: MenuState, key: str, *, mask: bool) -> tuple[str, str]:
+    """A row's ``(value text, accent)``: what is actually stored wins over
+    what the environment supplies — :func:`telegram_kit.resolve_credentials`
+    applies the same precedence at send time — which in turn wins over
+    saying there is nowhere to put a new one."""
+    env_name = _TG_ENV_KEYS[key]
+    stored = telegram_store.get(key)
+    if stored:
+        return (telegram_kit.mask_secret(stored) if mask else stored), GREEN
+    if os.environ.get(env_name, "").strip():
+        return _t(state.lang, "config_telegram_from_env", "using $%s", env_name), CYAN
+    if not telegram_store.available():
+        return (
+            f"{_WARN} " + _t(state.lang, "config_telegram_no_store", "no store — set $%s", env_name),
+            YELLOW,
+        )
+    return _t(state.lang, "config_telegram_not_set", "not set"), DIM
+
+
+def _telegram_status(state: MenuState) -> dict[str, tuple[str, str]]:
+    """``{key: (value text, accent)}`` for both rows, probed once per
+    session — see :attr:`MenuState.telegram_status`."""
+    if state.telegram_status is None:
+        state.telegram_status = {
+            telegram_store.TOKEN_KEY: _telegram_row_status(state, telegram_store.TOKEN_KEY, mask=True),
+            telegram_store.CHAT_ID_KEY: _telegram_row_status(state, telegram_store.CHAT_ID_KEY, mask=False),
+        }
+    return state.telegram_status
+
+
+def _telegram_token_value(state: MenuState) -> str:
+    return _telegram_status(state)[telegram_store.TOKEN_KEY][0]
+
+
+def _telegram_token_accent(state: MenuState) -> str:
+    return _telegram_status(state)[telegram_store.TOKEN_KEY][1]
+
+
+def _telegram_chat_id_value(state: MenuState) -> str:
+    return _telegram_status(state)[telegram_store.CHAT_ID_KEY][0]
+
+
+def _telegram_chat_id_accent(state: MenuState) -> str:
+    return _telegram_status(state)[telegram_store.CHAT_ID_KEY][1]
+
+
+def _telegram_edit(
+    state: MenuState,
+    stdin: IO[str],
+    out: IO[str],
+    *,
+    key: str,
+    mask: bool,
+    prompt: str,
+) -> list[str]:
+    """Shared flow for both Telegram rows.
+
+    ⏎ keeps the stored value unchanged — the same "no bare-Enter clear" rule
+    ai-accounts' own masked fields follow, so an unrelated Enter can never
+    wipe a real credential — ``-`` clears it, anything else is stored.
+    Returns the result line it printed (empty when kept unchanged), same
+    ``returns_to_panel`` contract as Export/Import.
+
+    *prompt* is already rendered by the caller, not a ``(msgid, english)``
+    pair taken here: ``tests/test_i18n.py``'s static collector only resolves
+    a ``_t()`` call whose msgid argument is a literal, and this row's current
+    value is only known once :func:`_telegram_status` has run.
+    """
+    env_name = _TG_ENV_KEYS[key]
+    print(prompt, end="", file=out)
+    out.flush()
+    answer = None
+    if mask:
+        # getpass opens /dev/tty directly on POSIX, bypassing *stdin*
+        # entirely — this only ever succeeds on a real controlling terminal
+        # (the arrow-key TUI's own surface). The numbered fallback, every
+        # test in this suite, and any real CI run all have no controlling
+        # tty, so this degrades to None immediately and never blocks on a
+        # human who was never going to type anything.
+        answer = telegram_kit.read_hidden("")
+    if answer is None:
+        answer = read_line(stdin)
+    print(file=out)
+    if not answer:  # None (EOF) or "" (blank ⏎): keep the stored value as-is
+        return []
+    if answer == "-":
+        telegram_store.delete(key)
+        state.telegram_status = None
+        message = f"  {GREEN}{_t(state.lang, 'config_telegram_cleared', f'{_OK} cleared')}{RESET}"
+        print(message, file=out)
+        return [message]
+    if telegram_store.set(key, answer):
+        state.telegram_status = None
+        message = f"  {GREEN}{_t(state.lang, 'config_telegram_saved', f'{_OK} saved')}{RESET}"
+    else:
+        message = (
+            f"  {RED}"
+            + _t(
+                state.lang,
+                "config_telegram_save_failed",
+                f"{_WARN} could not store securely (no credential store) — set $%s instead",
+                env_name,
+            )
+            + RESET
+        )
+    print(message, file=out)
+    return [message]
+
+
+def _telegram_token_action(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
+    prompt = _t(
+        state.lang,
+        "config_telegram_token_prompt",
+        "Bot token [%s] (⏎ to keep, '-' to clear): ",
+        _telegram_status(state)[telegram_store.TOKEN_KEY][0],
+    )
+    return _telegram_edit(state, stdin, out, key=telegram_store.TOKEN_KEY, mask=True, prompt=prompt)
+
+
+def _telegram_chat_id_action(state: MenuState, stdin: IO[str], out: IO[str]) -> list[str]:
+    prompt = _t(
+        state.lang,
+        "config_telegram_chat_id_prompt",
+        "Chat ID [%s] (⏎ to keep, '-' to clear): ",
+        _telegram_status(state)[telegram_store.CHAT_ID_KEY][0],
+    )
+    return _telegram_edit(state, stdin, out, key=telegram_store.CHAT_ID_KEY, mask=False, prompt=prompt)
+
+
 #: The menu, in display order. Append to extend — see the module docstring.
 ROWS: tuple[Row, ...] = (
     Row(
@@ -1181,6 +1335,26 @@ ROWS: tuple[Row, ...] = (
         value=lambda s: _SEPARATOR.join(s.chain),
         accent=lambda _s: CYAN,
         cycle=_rotate_chain,
+    ),
+    Row(
+        key="",
+        group=("config_group_notifications", "Notifications"),
+        label=("config_telegram_token", "Telegram bot token"),
+        help=("config_help_telegram_token", "Sent as this bot. ⏎ to keep, '-' to clear."),
+        value=_telegram_token_value,
+        accent=_telegram_token_accent,
+        action=_telegram_token_action,
+        returns_to_panel=True,
+    ),
+    Row(
+        key="",
+        group=None,
+        label=("config_telegram_chat_id", "Telegram chat ID"),
+        help=("config_help_telegram_chat_id", "Where notifications are sent. ⏎ to keep, '-' to clear."),
+        value=_telegram_chat_id_value,
+        accent=_telegram_chat_id_accent,
+        action=_telegram_chat_id_action,
+        returns_to_panel=True,
     ),
     # Rows, not subcommands: only `aicp` and `aicp --config` are ever meant to
     # be memorised, so skills management and the health check live here.

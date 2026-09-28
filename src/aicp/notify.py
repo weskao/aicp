@@ -12,12 +12,18 @@ a notification is the last step of a run that has usually already succeeded,
 so missing credentials, a network failure or a bad response all degrade to
 the printed line.
 
-**Credentials come from the environment only**, resolved per call:
-``TG_BOT_TOKEN`` and ``TG_CHAT_ID`` — the same names
+**Credentials are resolved per call, configured over environment.** Both are
+read fresh from :mod:`aicp.telegram_store` (the OS credential store — see its
+module docstring) — ``aicp --config``'s two Telegram rows write there — and
+:func:`telegram_kit.resolve_credentials` falls back to ``TG_BOT_TOKEN``/
+``TG_CHAT_ID`` for either one that is not configured, the same names
 ``~/.claude/scripts/tg-send.sh`` already used, so an existing Telegram setup
-carries over with no reconfiguration. Neither is ever read from ``.aicprc``:
-a config file is a checked-in, shareable artifact, and a bot token in it
-would be a leaked secret the moment that file is synced or committed.
+still carries over with no reconfiguration. Configured wins over env on
+purpose: a stale ``TG_BOT_TOKEN`` in a shell profile must not keep notifying
+through a bot the user already replaced in ``--config``. Neither value is
+ever read from ``.aicprc``: a config file is a checked-in, shareable
+artifact, and a bot token in it would be a leaked secret the moment that
+file is synced or committed.
 """
 
 from __future__ import annotations
@@ -26,12 +32,14 @@ import telegram_kit
 
 from ._utils import DIM, RESET
 from .i18n import t
+from .telegram_store import CHAT_ID_KEY, TOKEN_KEY
+from .telegram_store import get as _get_secret
 
 __all__ = ["notify"]
 
 
 def _send(message: str) -> bool:
-    token, chat_id = telegram_kit.resolve_credentials("", "")
+    token, chat_id = telegram_kit.resolve_credentials(_get_secret(TOKEN_KEY), _get_secret(CHAT_ID_KEY))
     return telegram_kit.send_message(token, chat_id, message)
 
 

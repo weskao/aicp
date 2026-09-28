@@ -1,21 +1,25 @@
 """The injected notifier: Telegram when it is there, a printed line when not.
 
 Sends straight to the Bot API through ``telegram_kit`` — no
-``~/.claude`` checkout, no shell script, no subprocess. Credentials
-(``TG_BOT_TOKEN``/``TG_CHAT_ID``) come from the environment ONLY — never from
-``.aicprc``, a checked-in, shareable file — and no failure may ever reach the
-caller: the notifier is wired into the runner as a plain ``NotifyFn`` and a
-raised exception there would take down a run that had already succeeded.
+``~/.claude`` checkout, no shell script, no subprocess. Credentials are
+resolved fresh per call, configured (``aicp.telegram_store``) over
+environment (``TG_BOT_TOKEN``/``TG_CHAT_ID``) — never from ``.aicprc``, a
+checked-in, shareable file — and no failure may ever reach the caller: the
+notifier is wired into the runner as a plain ``NotifyFn`` and a raised
+exception there would take down a run that had already succeeded.
 
-``pinned_environment`` (autouse, conftest.py) clears both variables for every
-test in this suite, so nothing here can fire a real Telegram message using
-whatever bot token happens to be exported on the machine running pytest.
+``pinned_environment`` (autouse, conftest.py) clears both env vars, and
+``_isolate_real_credential_store`` (autouse, conftest.py) backs the store
+with an in-memory fake, for every test in this suite — so nothing here can
+fire a real Telegram message using whatever bot token happens to be exported
+or stored on the machine running pytest.
 """
 
 from __future__ import annotations
 
 import telegram_kit
 
+from aicp import telegram_store
 from aicp.notify import notify
 
 # ── the send path ────────────────────────────────────────────────────────────
@@ -66,6 +70,42 @@ def test_credentials_are_read_fresh_each_call(monkeypatch) -> None:
     notify("two")
 
     assert seen == ["first", "second"]
+
+
+def test_a_stored_credential_is_used_over_the_environment(monkeypatch) -> None:
+    """Configured wins — a stale TG_BOT_TOKEN in a shell profile must not
+    keep notifying through a bot the user already replaced in --config."""
+    monkeypatch.setenv("TG_BOT_TOKEN", "stale-env-token")
+    monkeypatch.setenv("TG_CHAT_ID", "stale-env-chat")
+    telegram_store.set(telegram_store.TOKEN_KEY, "configured-token")
+    telegram_store.set(telegram_store.CHAT_ID_KEY, "configured-chat")
+    calls = []
+    monkeypatch.setattr(
+        telegram_kit,
+        "send_message",
+        lambda token, chat_id, text, **kw: calls.append((token, chat_id)) or True,
+    )
+
+    notify("hello")
+
+    assert calls == [("configured-token", "configured-chat")]
+
+
+def test_a_stored_token_falls_back_to_the_env_chat_id_independently(monkeypatch) -> None:
+    """Each credential falls back on its own — a stored token with no stored
+    chat id still uses TG_CHAT_ID rather than refusing to send at all."""
+    monkeypatch.setenv("TG_CHAT_ID", "env-chat")
+    telegram_store.set(telegram_store.TOKEN_KEY, "configured-token")
+    calls = []
+    monkeypatch.setattr(
+        telegram_kit,
+        "send_message",
+        lambda token, chat_id, text, **kw: calls.append((token, chat_id)) or True,
+    )
+
+    notify("hello")
+
+    assert calls == [("configured-token", "env-chat")]
 
 
 # ── the fallback path ────────────────────────────────────────────────────────
