@@ -222,6 +222,9 @@ class TextEdit:
     prompt: Callable[[MenuState], str]
     #: Typed as bullets, and never prefilled — see :func:`_edit_inline`.
     secret: bool = False
+    #: Longest value this field accepts — a paste-flood/held-key backstop,
+    #: not a format check. ``None`` means uncapped.
+    max_len: int | None = None
 
 
 def _on_off(state: MenuState, flag: bool) -> str:
@@ -1274,8 +1277,11 @@ def _text_edit_fallback(state: MenuState, edit: TextEdit, stdin: IO[str], out: I
     print(file=out)
     if not answer or not answer.strip():
         return
+    text = answer.strip()
+    if edit.max_len is not None:
+        text = text[: edit.max_len]
     try:
-        message = edit.commit(state, answer.strip())
+        message = edit.commit(state, text)
     except ValueError as exc:
         message = f"  {RED}{exc}{RESET}"
     print(message, file=out)
@@ -1362,7 +1368,10 @@ ROWS: tuple[Row, ...] = (
         ),
         value=lambda s: _telegram_token_status(s)[0],
         accent=lambda s: _telegram_token_status(s)[1],
-        text_edit=TextEdit(seed=lambda _s: "", commit=_commit_token, prompt=_token_prompt, secret=True),
+        text_edit=TextEdit(
+            seed=lambda _s: "", commit=_commit_token, prompt=_token_prompt, secret=True,
+            max_len=telegram_kit.MAX_TOKEN_LEN,
+        ),
     ),
     Row(
         key=TELEGRAM_CHAT_ID_KEY,
@@ -1374,7 +1383,10 @@ ROWS: tuple[Row, ...] = (
         ),
         value=lambda s: _telegram_chat_id_status(s)[0],
         accent=lambda s: _telegram_chat_id_status(s)[1],
-        text_edit=TextEdit(seed=lambda s: s.telegram_chat_id, commit=_commit_chat_id, prompt=_chat_id_prompt),
+        text_edit=TextEdit(
+            seed=lambda s: s.telegram_chat_id, commit=_commit_chat_id, prompt=_chat_id_prompt,
+            max_len=telegram_kit.MAX_CHAT_ID_LEN,
+        ),
     ),
     # Rows, not subcommands: only `aicp` and `aicp --config` are ever meant to
     # be memorised, so skills management and the health check live here.
@@ -1991,7 +2003,10 @@ def _edit_inline(
             break
         if key == "backspace":
             buffer = buffer[:-1]
-        else:
+        elif edit.max_len is None or len(buffer) < edit.max_len:
+            # Live-clamped, same as the digit cap elsewhere: a held key or a
+            # pasted flood stops growing the buffer instead of ballooning it
+            # one redraw at a time.
             buffer += key
         messages = []
     return _redraw(state, selected, out, lines, messages)
