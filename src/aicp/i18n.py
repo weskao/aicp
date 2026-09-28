@@ -193,6 +193,13 @@ CATALOG: dict[str, str] = {
     "settings_import_skipped": "略過：%s",
     "config_keys_plain": "1-%s 切換 · q 離開 · 自動儲存",
     "config_keys_tui": "↑↓ 選擇 · ←→ 切換 · ⏎ 切換／執行 · q/Ctrl+C 離開 · 自動儲存",
+    "config_keys_tui2": "d 還原此列 · D 全部還原",
+    "config_nothing_to_reset": "不是設定項目 — 無需還原",
+    "config_reset_all_q": "要把所有設定都還原成預設值嗎？[y/N]：",
+    "config_reset_all_done": "所有設定已還原成預設值",
+    "config_reset_row_q": "要把「%s」還原成 %s 嗎？[y/N]：",
+    "config_reset_row_empty": "空白",
+    "config_reset_row_cli_default": "aicp 的預設順序",
     "config_prompt": "請選擇要修改的項目（1-%s，q 離開）：",
     "config_bad_number": "⚠ 請輸入上面列出的項目編號。",
     # ── Skills: the row's inline status, the report, the installer prompts ──

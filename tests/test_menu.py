@@ -138,6 +138,82 @@ def test_the_update_check_toggle_is_written_immediately(menu):
     assert "Check for updates" in out
 
 
+# ── d/D: undo via reset, since the menu saves as it goes and has no
+# save/discard step of its own ────────────────────────────────────────────────
+
+
+def test_d_then_y_resets_the_highlighted_row_to_default(tmp_path):
+    from aicp.menu import _tui
+
+    path = tmp_path / "menu.json"
+    path.write_text(json.dumps({"aicp_do_commit": "0"}), encoding="utf-8")
+    state = MenuState(path, False, True, "en", list(ROSTER_NAMES))
+    out = io.StringIO()
+    assert _tui(state, io.StringIO("d\ny\nquit\n"), out) == 0
+    assert state.do_commit is True
+    assert "aicp_do_commit" not in json.loads(path.read_text(encoding="utf-8"))
+    assert 'Reset "Run the /commit step" to On? [y/N]' in _plain(out.getvalue())
+
+
+def test_d_then_anything_else_cancels_the_row_reset(tmp_path):
+    from aicp.menu import _tui
+
+    path = tmp_path / "menu.json"
+    path.write_text(json.dumps({"aicp_do_commit": "0"}), encoding="utf-8")
+    state = MenuState(path, False, True, "en", list(ROSTER_NAMES))
+    assert _tui(state, io.StringIO("d\nn\nquit\n"), io.StringIO()) == 0
+    assert state.do_commit is False
+    assert json.loads(path.read_text(encoding="utf-8"))["aicp_do_commit"] == "0"
+
+
+def test_d_on_an_action_row_changes_nothing_and_notes_it(tmp_path):
+    from aicp.menu import _tui
+
+    target = _row_number("config_skills")
+    path = tmp_path / "menu.json"
+    state = MenuState(path, True, True, "en", list(ROSTER_NAMES))
+    keys = "down\n" * (target - 1) + "d\nquit\n"
+    out = io.StringIO()
+    assert _tui(state, io.StringIO(keys), out) == 0
+    assert not path.exists(), "an action row has nothing to persist"
+    assert "nothing to reset" in _plain(out.getvalue())
+
+
+def test_D_then_y_resets_every_setting_to_default(tmp_path):
+    from aicp.menu import _tui
+
+    path = tmp_path / "menu.json"
+    path.write_text(
+        json.dumps({"aicp_do_commit": "0", "aicp_do_push": "0", "aicp_lang": "zh-TW"}),
+        encoding="utf-8",
+    )
+    state = MenuState(path, False, False, "zh-TW", list(ROSTER_NAMES))
+    assert _tui(state, io.StringIO("D\ny\nquit\n"), io.StringIO()) == 0
+    assert (state.do_commit, state.do_push, state.lang) == (True, True, "en")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert "aicp_do_commit" not in data
+    assert "aicp_do_push" not in data
+    assert "aicp_lang" not in data
+
+
+def test_D_then_anything_else_cancels_and_changes_nothing(tmp_path):
+    from aicp.menu import _tui
+
+    path = tmp_path / "menu.json"
+    path.write_text(json.dumps({"aicp_do_commit": "0"}), encoding="utf-8")
+    state = MenuState(path, False, True, "en", list(ROSTER_NAMES))
+    assert _tui(state, io.StringIO("D\nn\nquit\n"), io.StringIO()) == 0
+    assert state.do_commit is False
+    assert json.loads(path.read_text(encoding="utf-8"))["aicp_do_commit"] == "0"
+
+
+def test_the_tui_footer_mentions_reset_row_and_reset_all(tmp_path):
+    state = MenuState(tmp_path / "menu.json", True, True, "en", list(ROSTER_NAMES))
+    joined = "\n".join(_plain(line) for line in _panel(state, selected=1, out=io.StringIO()))
+    assert "d reset row" in joined
+    assert "D reset all" in joined
+
+
 def test_cli_order_motion_slides_one_name_and_keeps_every_frame_one_width():
     """The slide starts on the old order, ends on the new one, and never
     changes shape on the way — a frame that resized would shove the panel's

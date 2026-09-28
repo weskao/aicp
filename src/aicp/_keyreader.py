@@ -14,8 +14,13 @@ So :func:`is_interactive` is checked BEFORE any raw-mode call, and
 an empty read is ``"quit"``, never a wait.
 
 Key names returned are semantic (``up``/``down``/``left``/``right``/
-``enter``/``space``/``quit``/``reset``/``yes``/``top``/``edit``/``add``/
-``other``) so the menu never sees a byte.
+``enter``/``space``/``quit``/``reset``/``reset_row``/``reset_all``/``yes``/
+``top``/``edit``/``add``/``other``) so the menu never sees a byte.
+
+``d``/``D`` are the one pair where case carries meaning (row-reset vs.
+reset-all), so both :func:`_from_char` and :func:`_classify` check the
+untouched character before folding case for everything else — every other
+letter here has always been case-insensitive, and stays that way.
 """
 
 from __future__ import annotations
@@ -65,9 +70,14 @@ def read_line(stdin: IO[str] | None = None) -> str | None:
 
 def _classify(text: str) -> str:
     """Map typed text from the non-raw path onto a semantic key name."""
-    lowered = text.strip().lower()
+    stripped = text.strip()
+    if stripped == "D":  # reset ALL — checked before the case fold below
+        return "reset_all"
+    lowered = stripped.lower()
     if lowered in ("", "q", "quit"):
         return "quit"
+    if lowered == "d":
+        return "reset_row"
     return {
         "up": "up", "k": "up",
         "down": "down", "j": "down",
@@ -125,6 +135,10 @@ def _from_char(ch: str) -> str:
     # signal — cancelling a menu changed nothing and is not a failure.
     if ch in ("q", "Q", "\x03", "\x04", ""):
         return "quit"
+    if ch == "D":  # reset ALL — checked before .lower() folds it onto "d"
+        return "reset_all"
+    if ch == "d":
+        return "reset_row"
     return {" ": "space", "r": "reset", "y": "yes", "t": "top", "e": "edit", "a": "add"}.get(
         ch.lower(), "other"
     )

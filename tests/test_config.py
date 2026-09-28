@@ -35,6 +35,7 @@ from aicp.config import (
     import_updates,
     load_config,
     persist_key,
+    reset_key,
     resolve,
     resolve_cli_chain,
     timeout_bin,
@@ -522,6 +523,34 @@ def test_persist_key_reports_failure_instead_of_raising(tmp_path):
     blocked = tmp_path / "blocked"
     blocked.mkdir()
     assert persist_key("AICP_LANG", "en", blocked) is False
+
+
+# ── reset_key: undo a persisted value by removing it, not by writing the
+# hardcoded default — a fresh config has no line for it at all ──────────────
+
+
+def test_reset_key_removes_the_key_and_keeps_every_other(tmp_path):
+    path = tmp_path / "reset.json"
+    path.write_text(
+        json.dumps({"AICP_DO_COMMIT": "0", "AICP_TZ": "Etc/UTC"}), encoding="utf-8"
+    )
+    assert reset_key("AICP_DO_COMMIT", path) is True
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert "aicp_do_commit" not in data
+    assert data["aicp_tz"] == "Etc/UTC"
+
+
+def test_reset_key_is_a_no_op_when_the_key_is_already_absent(tmp_path):
+    path = tmp_path / "already-default.json"
+    path.write_text(json.dumps({"AICP_TZ": "Etc/UTC"}), encoding="utf-8")
+    assert reset_key("AICP_DO_COMMIT", path) is True
+    assert json.loads(path.read_text(encoding="utf-8")) == {"aicp_tz": "Etc/UTC"}
+
+
+def test_reset_key_reports_failure_instead_of_raising(tmp_path):
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+    assert reset_key("AICP_LANG", blocked) is False
 
 
 def test_load_config_reads_the_file_only(cfg, monkeypatch):

@@ -154,6 +154,15 @@ right now": which steps run, message language, fallback CLI order, the
 skills install/upgrade view, a health check, and — see below — saving or
 loading those settings as a file.
 
+Every pick saves immediately — there's no save/discard step to forget, and
+quitting can never lose a change. `d` on the arrow-key screen is the way back
+out of one: it resets the highlighted row to its shipped default, naming the
+row and its default value in its own `[y/N]` prompt (e.g. `Reset "Telegram bot
+token" to empty? [y/N]`) — anything but `y`/`Y` leaves it as it was. `D` resets
+every setting at once, gated by the same kind of `[y/N]` prompt — anything but
+`y`/`Y` leaves everything as it was. Both are no-ops on a row that isn't a
+setting (Skills, Agents, Doctor, Export/Import settings).
+
 ### Fallback order
 
 The order is a saved preference, not a property of the tool. Three ways to

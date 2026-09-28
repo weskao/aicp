@@ -102,6 +102,7 @@ __all__ = [
     "import_updates",
     "load_config",
     "persist_key",
+    "reset_key",
     "resolve",
     "resolve_cli_chain",
     "timeout_bin",
@@ -445,6 +446,20 @@ def persist_key(key: str, value: str, path: Path | str | None = None) -> bool:
     path = config_path() if path is None else Path(path)
     data = _read_json_object(path)
     data[key] = value
+    return _write_json_private(path, data)
+
+
+def reset_key(key: str, path: Path | str | None = None) -> bool:
+    """Remove *key* from *path*'s JSON object, so it reads back exactly as a
+    fresh config would — no line for it at all, rather than a line spelling
+    out the hardcoded default. False on failure, same contract as
+    :func:`persist_key` — including always attempting the write, even when
+    *key* is already absent, so a blocked path is still reported rather than
+    short-circuited into a false success.
+    """
+    path = config_path() if path is None else Path(path)
+    data = _read_json_object(path)
+    data.pop(key, None)
     return _write_json_private(path, data)
 
 

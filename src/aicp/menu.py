@@ -42,6 +42,7 @@ is a form and not a row.
 from __future__ import annotations
 
 import contextlib
+import copy
 import datetime
 import io
 import os
@@ -101,6 +102,7 @@ from .config import (
     import_updates,
     load_config,
     persist_key,
+    reset_key,
     resolve,
     timeout_bin,
 )
@@ -1610,6 +1612,20 @@ def _panel(
         if _is_doctor(ROWS[selected - 1]):
             notes.extend(_doctor_detail_notes(state, reserve))
             notes.append("")
+        if editing is None:
+            # Its own line, ahead of config_keys_tui below: the height-trim
+            # loop further down always protects the LAST note (the one "stuck
+            # in an unfamiliar menu" needs most), so the primary ↑↓/←→/⏎ hint
+            # has to stay last and this one goes ahead of it, droppable first
+            # on a short terminal.
+            notes.append(
+                f"{DIM}"
+                + _fit(
+                    _t(state.lang, "config_keys_tui2", "d reset row · D reset all"),
+                    help_budget,
+                )
+                + f"{RESET}"
+            )
         notes.append(
             f"{DIM}"
             + _fit(
@@ -1688,6 +1704,120 @@ def _write(
         file=out,
     )
     return False
+
+
+#: What each cycle row's shipped default is, keyed by its config key — the
+#: ``d``/``D`` undo keys' only table. A cycle mutator only knows how to move
+#: one step; there is no "set to N" version of it to reuse here, unlike the
+#: text_edit rows below, which already have one (see :func:`_reset_row`).
+_CYCLE_DEFAULTS: dict[str, Callable[[MenuState], None]] = {
+    "AICP_DO_COMMIT": lambda s: setattr(s, "do_commit", True),
+    "AICP_DO_PUSH": lambda s: setattr(s, "do_push", True),
+    "AICP_LANG": lambda s: setattr(s, "lang", "en"),
+    "AICP_UPDATE_CHECK": lambda s: setattr(s, "update_check", True),
+    "AICP_CLI_ORDER": lambda s: setattr(s, "chain", list(_ROSTER_NAMES)),
+}
+
+
+def _reset_row(state: MenuState, row: Row) -> bool:
+    """Put *row* back to its shipped default and persist that immediately —
+    the ``d``/``D`` undo keys' only job. False when *row* has nothing to
+    reset (an action row: Skills, Agents, Doctor, Export, Import) or the
+    write failed.
+
+    A text_edit row reuses its own ``commit``, which already treats ``-`` as
+    "clear" (see :class:`TextEdit`) — the same path a typed ``-`` takes. A
+    cycle row has no such absolute setter, only a step, so this removes the
+    key from config.json instead of writing out the default value: the file
+    then reads exactly like a fresh install's, which is the more honest
+    "default" of the two the menu could persist.
+    """
+    if row.text_edit is not None:
+        row.text_edit.commit(state, "-")
+        return True
+    reset_default = _CYCLE_DEFAULTS.get(row.key)
+    if reset_default is None:
+        return False
+    reset_default(state)
+    if not reset_key(row.key, state.path):
+        return False
+    state.health = None  # Doctor reports on the file just written
+    return True
+
+
+def _is_resettable(row: Row) -> bool:
+    """Whether ``d`` has anything to undo on *row* — the same rule
+    :func:`_reset_row` applies, checked up front so a mistaken ``d`` on an
+    action row (Skills, Agents, Doctor, Export, Import) skips straight to the
+    "nothing to reset" note instead of asking a [y/N] question about nothing.
+    """
+    return row.text_edit is not None or row.key in _CYCLE_DEFAULTS
+
+
+def _reset_row_preview(state: MenuState, row: Row) -> str:
+    """What *row*'s value column will read right after ``d`` resets it — the
+    confirm question's only per-row part.
+
+    A text_edit row always clears to empty, the same as a typed ``-`` (see
+    :func:`_reset_row`). ``AICP_CLI_ORDER``'s full default chain is long
+    enough to wrap a one-line prompt, so it names the order instead of
+    spelling it out. Every other row previews its own default by applying
+    :data:`_CYCLE_DEFAULTS` to a throwaway copy of *state* and reading the
+    row's own ``value`` off of it — reusing the row's existing formatting
+    (On/Off, the language name) rather than a second, hand-written
+    description that could drift from it.
+    """
+    if row.text_edit is not None:
+        return _t(state.lang, "config_reset_row_empty", "empty")
+    if row.key == "AICP_CLI_ORDER":
+        return _t(state.lang, "config_reset_row_cli_default", "aicp default order")
+    preview = copy.copy(state)
+    _CYCLE_DEFAULTS[row.key](preview)
+    return row.value(preview)
+
+
+def _reset_row_action(
+    state: MenuState, row: Row, stdin: IO[str], out: IO[str]
+) -> tuple[list[str], int]:
+    """``d`` on a resettable row: one [y/N] question naming the row and its
+    default, gating the same write :func:`_reset_row` always did silently —
+    a mistaken keypress must not blank a field. Reuses
+    :func:`_reset_all_action`'s ``_prompt_line`` mechanism and
+    ``(result line(s), rows printed)`` contract, one consistent confirm
+    pattern rather than a second confirmation UI: anything but y/Y cancels
+    with no change, exactly like ``D``.
+    """
+    print(file=out)
+    label = _t(state.lang, *row.label)
+    default = _reset_row_preview(state, row)
+    question = _t(state.lang, "config_reset_row_q", 'Reset "%s" to %s? [y/N]: ', label, default)
+    answer, rows = _prompt_line(question, stdin, out)
+    rows += 1  # the leading blank line above
+    if answer is None or answer.strip().lower() not in ("y", "yes"):
+        return [], rows
+    _reset_row(state, row)
+    return [], rows
+
+
+def _reset_all_action(state: MenuState, stdin: IO[str], out: IO[str]) -> tuple[list[str], int]:
+    """``D``: every resettable row back to its default, gated by one [y/N] —
+    the only way to undo more than the last change, since the menu saves as
+    it goes and there is no save/discard step otherwise. Same
+    ``(result line(s), rows printed)`` contract as a ``returns_to_panel``
+    action (see :func:`_export_action`)."""
+    print(file=out)
+    question = _t(state.lang, "config_reset_all_q", "Reset ALL settings to defaults? [y/N]: ")
+    answer, rows = _prompt_line(question, stdin, out)
+    rows += 1  # the leading blank line above
+    if answer is None or answer.strip().lower() not in ("y", "yes"):
+        return [], rows
+    for row in ROWS:
+        _reset_row(state, row)
+    message = (
+        f"  {GREEN}{_OK}{RESET} "
+        + _t(state.lang, "config_reset_all_done", "all settings reset to defaults")
+    )
+    return [message], rows
 
 
 #: Update prompt rows, top to bottom — the answers update_check.offer acts on.
@@ -2096,6 +2226,32 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
                                 # settled frame now rather than making it queue
                                 # behind a slide nobody is still watching
                             time.sleep(held)
+                elif key == "reset_row":
+                    row = ROWS[selected - 1]
+                    if not _is_resettable(row):
+                        # An action row (Skills, Agents, Doctor, Export,
+                        # Import) has no value to undo — say so rather than
+                        # silently ignoring the key.
+                        note = (
+                            f"{DIM}"
+                            + _t(
+                                state.lang,
+                                "config_nothing_to_reset",
+                                "Not a setting — nothing to reset",
+                            )
+                            + RESET
+                        )
+                        lines = _return_to_panel(state, out, selected, lines, 0, [note])
+                        continue
+                    with typed():
+                        messages, rows = _reset_row_action(state, row, stdin, out)
+                    lines = _return_to_panel(state, out, selected, lines, rows, messages)
+                    continue
+                elif key == "reset_all":
+                    with typed():
+                        messages, rows = _reset_all_action(state, stdin, out)
+                    lines = _return_to_panel(state, out, selected, lines, rows, messages)
+                    continue
                 else:
                     continue
                 out.write(f"\033[{_frame_rows(lines, out)}A\033[J")
