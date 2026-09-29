@@ -1,3 +1,8 @@
+## [0.17.1] - 2026-09-29
+
+### 📚 Documentation
+
+- Document scheduler-free update behavior
 ## [0.17.0] - 2026-09-28
 
 ### 🚀 Features
@@ -7,12 +12,24 @@
 ### 🐛 Bug Fixes
 
 - **menu:** Keep import/export rows stable
+
+### 📚 Documentation
+
+- **changelog:** Release v0.17.0
 ## [0.16.1] - 2026-09-28
+
+### 📚 Documentation
+
+- **changelog:** Release v0.16.1
 ## [0.16.0] - 2026-09-28
 
 ### 🚀 Features
 
 - **telegram:** Cap token/chat id field length in --config
+
+### 📚 Documentation
+
+- **changelog:** Release v0.16.0
 ## [0.15.0] - 2026-09-28
 
 ### 🚀 Features
