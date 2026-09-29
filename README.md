@@ -75,6 +75,10 @@ uv tool upgrade aicp-cli
 uv tool uninstall aicp-cli
 ```
 
+`aicp` is an on-demand CLI. It installs no launchd, systemd, or Windows
+scheduled job, so upgrades and `aicp --config` changes need no service restart;
+the next invocation uses the new version or settings.
+
 When a newer release is on PyPI, aicp asks after the command finishes:
 **Update now** (runs `uv tool upgrade aicp-cli`), **Skip** (ask again next
 run), or **Skip until next version**. Off a terminal (CI, pipes) it prints a
