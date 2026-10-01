@@ -827,6 +827,8 @@ def _agents_tui(
         key = read_key(stdin, out)
         if key == "quit":
             return lines
+        if key == "reset_all":
+            key = "reset"  # In the Agents submenu, R retains r's row-reset action.
         message: str | None = None
         rows = _ordered_agents(state)
         if key == "up":
@@ -1621,7 +1623,7 @@ def _panel(
             notes.append(
                 f"{DIM}"
                 + _fit(
-                    _t(state.lang, "config_keys_tui2", "d reset row · D reset all"),
+                    _t(state.lang, "config_keys_tui2", "r reset row · R reset all"),
                     help_budget,
                 )
                 + f"{RESET}"
@@ -1707,7 +1709,7 @@ def _write(
 
 
 #: What each cycle row's shipped default is, keyed by its config key — the
-#: ``d``/``D`` undo keys' only table. A cycle mutator only knows how to move
+#: ``r``/``R`` undo keys' only table. A cycle mutator only knows how to move
 #: one step; there is no "set to N" version of it to reuse here, unlike the
 #: text_edit rows below, which already have one (see :func:`_reset_row`).
 _CYCLE_DEFAULTS: dict[str, Callable[[MenuState], None]] = {
@@ -1721,7 +1723,7 @@ _CYCLE_DEFAULTS: dict[str, Callable[[MenuState], None]] = {
 
 def _reset_row(state: MenuState, row: Row) -> bool:
     """Put *row* back to its shipped default and persist that immediately —
-    the ``d``/``D`` undo keys' only job. False when *row* has nothing to
+    the ``r``/``R`` undo keys' only job. False when *row* has nothing to
     reset (an action row: Skills, Agents, Doctor, Export, Import) or the
     write failed.
 
@@ -1746,8 +1748,8 @@ def _reset_row(state: MenuState, row: Row) -> bool:
 
 
 def _is_resettable(row: Row) -> bool:
-    """Whether ``d`` has anything to undo on *row* — the same rule
-    :func:`_reset_row` applies, checked up front so a mistaken ``d`` on an
+    """Whether ``r`` has anything to undo on *row* — the same rule
+    :func:`_reset_row` applies, checked up front so a mistaken ``r`` on an
     action row (Skills, Agents, Doctor, Export, Import) skips straight to the
     "nothing to reset" note instead of asking a [y/N] question about nothing.
     """
@@ -1755,7 +1757,7 @@ def _is_resettable(row: Row) -> bool:
 
 
 def _reset_row_preview(state: MenuState, row: Row) -> str:
-    """What *row*'s value column will read right after ``d`` resets it — the
+    """What *row*'s value column will read right after ``r`` resets it — the
     confirm question's only per-row part.
 
     A text_edit row always clears to empty, the same as a typed ``-`` (see
@@ -1779,13 +1781,13 @@ def _reset_row_preview(state: MenuState, row: Row) -> str:
 def _reset_row_action(
     state: MenuState, row: Row, stdin: IO[str], out: IO[str]
 ) -> tuple[list[str], int]:
-    """``d`` on a resettable row: one [y/N] question naming the row and its
+    """``r`` on a resettable row: one [y/N] question naming the row and its
     default, gating the same write :func:`_reset_row` always did silently —
     a mistaken keypress must not blank a field. Reuses
     :func:`_reset_all_action`'s ``_prompt_line`` mechanism and
     ``(result line(s), rows printed)`` contract, one consistent confirm
     pattern rather than a second confirmation UI: anything but y/Y cancels
-    with no change, exactly like ``D``.
+    with no change, exactly like ``R``.
     """
     print(file=out)
     label = _t(state.lang, *row.label)
@@ -1800,7 +1802,7 @@ def _reset_row_action(
 
 
 def _reset_all_action(state: MenuState, stdin: IO[str], out: IO[str]) -> tuple[list[str], int]:
-    """``D``: every resettable row back to its default, gated by one [y/N] —
+    """``R``: every resettable row back to its default, gated by one [y/N] —
     the only way to undo more than the last change, since the menu saves as
     it goes and there is no save/discard step otherwise. Same
     ``(result line(s), rows printed)`` contract as a ``returns_to_panel``
@@ -2226,7 +2228,7 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
                                 # settled frame now rather than making it queue
                                 # behind a slide nobody is still watching
                             time.sleep(held)
-                elif key == "reset_row":
+                elif key == "reset":
                     row = ROWS[selected - 1]
                     if not _is_resettable(row):
                         # An action row (Skills, Agents, Doctor, Export,
