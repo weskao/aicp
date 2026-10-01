@@ -1,3 +1,13 @@
+## [0.17.2] - 2026-10-01
+
+### 🐛 Bug Fixes
+
+- **menu:** Move reset shortcuts to r/R
+- **notify:** Send Telegram messages via sendRichMessage
+
+### ⚙️ Miscellaneous Tasks
+
+- Ignore codegraph directory
 ## [0.17.1] - 2026-09-29
 
 ### 📚 Documentation
