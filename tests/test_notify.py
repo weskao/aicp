@@ -159,3 +159,15 @@ def test_notify_is_notifyfn_compatible(capsys) -> None:
     fn: NotifyFn = notify
     assert fn("a message") is None
     capsys.readouterr()
+
+
+def test_rich_message_is_tried_before_plain(monkeypatch) -> None:
+    monkeypatch.setenv("TG_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TG_CHAT_ID", "42")
+    sent = []
+    monkeypatch.setattr("aicp.notify._send_rich", lambda *a: sent.append(a) or True)
+    monkeypatch.setattr(telegram_kit, "send_message", lambda *a, **kw: sent.append("plain") or True)
+
+    notify("| a | b |")
+
+    assert sent == [("tok", "42", "| a | b |")]

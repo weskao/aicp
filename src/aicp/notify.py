@@ -31,7 +31,10 @@ file is synced or committed.
 
 from __future__ import annotations
 
+import json
 import os
+import urllib.error
+import urllib.request
 
 import telegram_kit
 
@@ -47,11 +50,39 @@ __all__ = ["notify"]
 CHAT_ID_ENV = "AICP_TELEGRAM_CHAT_ID"
 
 
+_RICH_API = "https://api.telegram.org/bot{token}/sendRichMessage"
+
+
+def _send_rich(token: str, chat_id: str, markdown: str) -> bool:
+    """POST one sendRichMessage (Bot API 10.1). False on any failure."""
+    if not token or not chat_id:
+        return False
+    line = telegram_kit.tmux_line()
+    if line and line not in markdown:
+        markdown = f"{markdown}\n\n{line}"  # a single \n is a soft break in rich text
+    body = json.dumps({"chat_id": chat_id, "rich_message": {"markdown": markdown}}).encode()
+    request = urllib.request.Request(
+        _RICH_API.format(token=token),
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            response.read()
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+    return True
+
+
 def _send(message: str) -> bool:
     token, chat_id = telegram_kit.resolve_credentials(
         _get_secret(TOKEN_KEY), os.environ.get(CHAT_ID_ENV, "")
     )
-    return telegram_kit.send_message(token, chat_id, message)
+    # Rich first so tables/headings/code render; plain sendMessage if it fails.
+    return _send_rich(token, chat_id, message) or telegram_kit.send_message(
+        token, chat_id, message
+    )
 
 
 def notify(message: str) -> None:

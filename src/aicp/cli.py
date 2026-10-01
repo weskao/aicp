@@ -571,13 +571,8 @@ def _report(
         + f'| {t("result_new_commits", "New commits")} | {summary.created} |\n'
         + f'| {t("result_ahead", "Ahead")} | {summary.ahead} |\n'
         + f'| {t("result_behind", "Behind")} | {summary.behind} |\n\n'
-        + local_title
-        + "\n"
-        + "\n".join(local)
-        + "\n"
-        + remote_title
-        + "\n"
-        + "\n".join(incoming)
+        + f"**{local_title}**\n\n```\n" + "\n".join(local) + "\n```\n\n"
+        + f"**{remote_title}**\n\n```\n" + "\n".join(incoming) + "\n```"
     )
     return 1
 

@@ -53,6 +53,12 @@ from aicp import telegram_store
 
 
 @pytest.fixture(autouse=True)
+def _no_rich_network(monkeypatch):
+    """Keep ``notify`` off the real sendRichMessage endpoint; tests opt in."""
+    monkeypatch.setattr("aicp.notify._send_rich", lambda *a, **kw: False)
+
+
+@pytest.fixture(autouse=True)
 def pinned_environment(tmp_path, monkeypatch):
     """Deterministic locale, terminal width, and filesystem isolation.
 
