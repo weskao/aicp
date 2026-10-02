@@ -1,3 +1,8 @@
+## [0.20.0] - 2026-10-02
+
+### 🚀 Features
+
+- **config:** Centre logo and add idle shimmer
 ## [0.19.0] - 2026-10-02
 
 ### 🚀 Features
