@@ -9,14 +9,11 @@ and fix cases like this where a slow/unreliable step gets silently
 bypassed instead of fixed. Audit other stages for similar slowness or
 failure-avoidance patterns.
 
-## Support "devin" harness (open)
+## Harness support
 
-Detect and support the Devin AI agent environment (`~/.devin`).
-Add a `devin` harness so `aicp` can install skills, rules, and config
-into the paths and formats that Devin expects.
-
-## Support "opencode" harness (open)
-
-Detect and support the OpenCode agent environment (`~/.opencode`).
-Add an `opencode` harness so `aicp` can install skills, rules, and config
-into the paths and formats that OpenCode expects.
+- [ ] Support "devin" harness — detect the Devin AI agent environment
+  (`~/.devin`). Add a `devin` harness so `aicp` can install skills, rules,
+  and config into the paths and formats that Devin expects.
+- [ ] Support "opencode" harness — detect the OpenCode agent environment
+  (`~/.opencode`). Add an `opencode` harness so `aicp` can install skills,
+  rules, and config into the paths and formats that OpenCode expects.
