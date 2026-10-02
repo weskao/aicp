@@ -159,6 +159,12 @@ right now": which steps run, message language, fallback CLI order, the
 skills install/upgrade view, a health check, and — see below — saving or
 loading those settings as a file.
 
+A logo sits above the menu when the window is big enough (at least 27 rows;
+three sizes, the widest that fits wins; below that, none). The **Logo** row
+cycles `color` (blue→cyan gradient) → `mono` (one blue) → `animated` (a glint
+sweeps across once on entry and after you pick it) → `off`. It follows
+`NO_COLOR`: with colour off you get the plain glyphs.
+
 Every pick saves immediately — there's no save/discard step to forget, and
 quitting can never lose a change. `d` on the arrow-key screen is the way back
 out of one: it resets the highlighted row to its shipped default, naming the
@@ -456,6 +462,7 @@ in this file to filter: `aicp` stores none.
 | `AICP_DO_COMMIT` | `1` | Run the `/commit` step. `0` = only push what's already committed. |
 | `AICP_DO_PUSH` | `1` | Run the `/safe-git-push` step. `0` = commit and stop. |
 | `AICP_LANG` | `en` | Message language: `en` or `zh-TW`, everywhere including notifications. |
+| `AICP_LOGO` | `color` | The `aicp --config` banner: `color`, `mono`, `animated` or `off`. Anything else falls back to `color`. |
 | `AICP_CLI_ORDER` | registry order (`copilot agy codex claude vibe grok opencode` out of the box) | Fallback order, space-separated. A prefix is enough — any agent left out is appended after it, in registry order, so adding an agent never invalidates an order you already saved. An unknown or repeated name is refused outright and the default order is used. |
 | `AICP_TZ` | `Asia/Taipei` | IANA zone name used to render commit timestamps. Anything else falls back to the default. |
 | `AICP_TZ_LABEL` | `UTC+8` | Cosmetic label shown beside those timestamps; not validated. |
