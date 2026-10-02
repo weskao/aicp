@@ -2,7 +2,7 @@
   "aicp_do_commit": "1",
   "aicp_do_push": "1",
   "aicp_lang": "en",
-  "aicp_cli_order": "copilot agy codex claude vibe grok",
+  "aicp_cli_order": "copilot agy codex claude vibe grok opencode",
   "aicp_tz": "Asia/Taipei",
   "aicp_tz_label": "UTC+8",
   "aicp_timeout_base": "180",
