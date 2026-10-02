@@ -1,3 +1,12 @@
+## [0.19.0] - 2026-10-02
+
+### 🚀 Features
+
+- **config:** Add logo banner with color/mono/animated modes
+
+### 📚 Documentation
+
+- Document the config logo and AICP_LOGO
 ## [0.18.0] - 2026-10-02
 
 ### 🚀 Features
