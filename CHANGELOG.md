@@ -1,9 +1,23 @@
+## [0.18.0] - 2026-10-02
+
+### 🚀 Features
+
+- **agents:** Add opencode harness
+
+### 📚 Documentation
+
+- **todo:** Split devin and opencode into checkboxes
+- Document opencode harness
 ## [0.17.2] - 2026-10-01
 
 ### 🐛 Bug Fixes
 
 - **menu:** Move reset shortcuts to r/R
 - **notify:** Send Telegram messages via sendRichMessage
+
+### 📚 Documentation
+
+- Release 0.17.2
 
 ### ⚙️ Miscellaneous Tasks
 
@@ -13,6 +27,7 @@
 ### 📚 Documentation
 
 - Document scheduler-free update behavior
+- **changelog:** Release v0.17.1
 ## [0.17.0] - 2026-09-28
 
 ### 🚀 Features
