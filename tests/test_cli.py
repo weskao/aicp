@@ -297,7 +297,7 @@ def test_flow_prints_the_configured_chain_before_the_first_attempt(
     run(repo_ahead)
 
     out = capsys.readouterr().out
-    assert "chain: copilot → agy → codex → claude → vibe → grok" in out
+    assert "chain: copilot → agy → codex → claude → vibe → grok → opencode" in out
     assert out.index("chain:") < out.index("▸ /commit")
     assert out.count("copilot") >= 3  # chain plus the two successful step handlers
 

@@ -389,7 +389,7 @@ def test_swap_ai_on_the_current_first_writes_nothing(swap):
 def test_swap_ai_persists_the_pick_as_the_new_first(swap):
     code, _, cfg = swap("5\n")
     assert code == 0
-    expected = "vibe agy codex claude copilot grok"
+    expected = "vibe agy codex claude copilot grok opencode"
     assert json.loads(cfg.read_text(encoding="utf-8"))["aicp_cli_order"] == expected
 
 

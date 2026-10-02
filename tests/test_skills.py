@@ -87,7 +87,7 @@ def configured(home):
 
     def _make(*names: str) -> Path:
         for name in names:
-            (home / cli(name).config_dir.name).mkdir(parents=True, exist_ok=True)
+            skills.config_root(cli(name), home=home).mkdir(parents=True, exist_ok=True)
         return home
 
     return _make
@@ -118,10 +118,10 @@ def test_claude_gets_safe_git_push_but_no_commit(configured):
     assert not (h / ".claude/skills/commit").exists()
 
 
-@pytest.mark.parametrize("name", ["codex", "copilot", "agy", "vibe", "grok"])
+@pytest.mark.parametrize("name", ["codex", "copilot", "agy", "vibe", "grok", "opencode"])
 def test_non_claude_clis_get_both_skills(configured, name):
     h = configured(name)
-    root = h / cli(name).config_dir.name
+    root = skills.config_root(cli(name), home=h)
     skills.install([cli(name)], home=h)
 
     assert (root / "skills/commit/SKILL.md").is_file()
@@ -150,6 +150,22 @@ def test_live_grok_home_overrides_the_default_root(home, monkeypatch, tmp_path):
         skills.NOT_INSTALLED,
         skills.NOT_INSTALLED,
     ]
+
+
+def test_opencode_installs_two_levels_deep_and_honours_its_env_override(
+    configured, home, monkeypatch, tmp_path
+):
+    h = configured("opencode")
+    skills.install([cli("opencode")], home=h)
+    for skill in ("commit", "safe-git-push"):
+        assert (h / ".config/opencode/skills" / skill / "SKILL.md").is_file()
+
+    monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
+    assert skills.config_root(cli("opencode"), home=Path("/x")) == Path("/x/.config/opencode")
+    oc_home = tmp_path / "oc-home"
+    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(oc_home))
+    assert skills.config_root(cli("opencode")) == oc_home
+    assert skills.config_root(cli("opencode"), home=home) == home / ".config/opencode"
 
 
 # ── per-CLI path rewriting ───────────────────────────────────────────────────
@@ -181,7 +197,7 @@ def test_memory_file_and_config_dir_rewritten_per_cli(configured, name, dir_ref,
     h = configured(name)
     skills.install([cli(name)], home=h)
 
-    text = (h / cli(name).config_dir.name / "skills/commit/SKILL.md").read_text(
+    text = (skills.config_root(cli(name), home=h) / "skills/commit/SKILL.md").read_text(
         encoding="utf-8"
     )
     assert dir_ref in text
@@ -1002,3 +1018,4 @@ def test_platform_table_covers_the_whole_roster():
     assert skills.PLATFORMS[".claude"].skills == ("safe-git-push",)
     assert "commit" in skills.PLATFORMS[".gemini"].skills
     assert "commit" in skills.PLATFORMS[".grok"].skills
+    assert skills.PLATFORMS["opencode"].skills == ("commit", "safe-git-push")

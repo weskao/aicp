@@ -186,7 +186,7 @@ def test_disabling_keeps_the_rest_of_a_hand_picked_order(home, cfg):
     unknown name and falls back to roster order — so "disable grok" would
     quietly undo a deliberately reordered chain."""
     cfg.parent.mkdir(parents=True, exist_ok=True)
-    picked = "grok claude copilot agy codex vibe"
+    picked = "grok claude copilot agy codex vibe opencode"
     cfg.write_text(json.dumps({"aicp_cli_order": picked}), encoding="utf-8")
     agentcfg.apply("disable", "grok", home=home, config_path=cfg)
     saved = config.load_config(cfg)["AICP_CLI_ORDER"]
@@ -208,7 +208,7 @@ def test_an_order_with_no_stale_name_is_left_alone(home, cfg):
 def test_agents_lists_every_built_in_agent(capsys):
     assert main(["--agents"]) == 0
     out = capsys.readouterr().out
-    for name in ("copilot", "agy", "codex", "claude", "vibe", "grok"):
+    for name in ("copilot", "agy", "codex", "claude", "vibe", "grok", "opencode"):
         assert name in out
     assert "built-in" in out
 

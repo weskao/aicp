@@ -257,7 +257,7 @@ def test_the_agents_row_toggles_an_agent_and_refreshes_its_own_status(menu, home
     assert "grok disabled" in out and "grok enabled" in out
     # The row's value column is probed once and cached; a toggle has to drop
     # that cache or the menu keeps reporting the roster it started with.
-    assert "5 active · 1 off" in out, out
+    assert "6 active · 1 off" in out, out
     assert not (home / ".aicp" / "agents.json").exists(), "enable undid the write"
 
 
@@ -266,7 +266,7 @@ def test_the_agents_row_prunes_the_saved_cli_order_it_just_invalidated(menu, hom
     order must not be left naming an agent that no longer resolves."""
     _, _, cfg = menu(
         f"{AGENTS_ROW}\n{_agent_number('grok')}\nq\n",
-        initial=json.dumps({"aicp_cli_order": "grok claude copilot agy codex vibe"}),
+        initial=json.dumps({"aicp_cli_order": "grok claude copilot agy codex vibe opencode"}),
     )
     assert json.loads(cfg.read_text(encoding="utf-8"))["aicp_cli_order"].split() == [
         "claude",
@@ -274,6 +274,7 @@ def test_the_agents_row_prunes_the_saved_cli_order_it_just_invalidated(menu, hom
         "agy",
         "codex",
         "vibe",
+        "opencode",
     ]
 
 
