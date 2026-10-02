@@ -128,3 +128,78 @@ def test_changing_the_logo_row_in_the_tui_erases_logo_and_panel(tmp_path, monkey
     erase = re.findall(r"\033\[(\d+)A\033\[J", out.getvalue())
     panel_rows = len(menu_module._panel(state, _logo_row(), out))
     assert str(panel_rows + 7) in erase
+
+
+def test_the_logo_is_centred_over_the_panel(tmp_path, monkeypatch):
+    _size(monkeypatch, 120, 50)
+    out = io.StringIO()
+    config_menu(path=tmp_path / "c.json", stdin=io.StringIO("q\n"), stdout=out)
+    lines = _plain(out.getvalue()).splitlines()
+    panel = next(line for line in lines if line.startswith("╭"))
+    row = next(line for line in lines if "██╔══██╗██║" in line)  # row 2 starts flush, no own padding
+    assert len(row) - len(row.lstrip()) == (width(panel) - len(logo.TIERS[0][0])) // 2
+
+
+@pytest.mark.parametrize("columns", [40, 60, 80, 100, 160])
+def test_no_logo_line_reaches_the_last_column(tmp_path, monkeypatch, columns):
+    _size(monkeypatch, columns, 50)
+    out = io.StringIO()
+    config_menu(path=tmp_path / "c.json", stdin=io.StringIO("q\n"), stdout=out)
+    for line in _plain(out.getvalue()).splitlines():
+        if "█" in line or "_" in line:
+            assert width(line) <= columns - 1
+
+
+def _idle_tui(tmp_path, monkeypatch, mode):
+    """Run the TUI with colour on, the idle timer expiring once, then a key."""
+    _size(monkeypatch, 100, 50)
+    monkeypatch.setattr(menu_module, "color_supported", lambda _out: True)
+    monkeypatch.setattr(menu_module.time, "sleep", lambda _s: None)
+    waits = []
+
+    def fake_pending(_stdin, timeout=0.0):
+        if timeout:
+            waits.append(timeout)
+            return len(waits) > 1  # first idle wait times out, the second sees a key
+        return False
+
+    monkeypatch.setattr(menu_module, "pending", fake_pending)
+    state = MenuState(tmp_path / "c.json", True, True, "en", list(_ROSTER))
+    state.logo = mode
+    out = io.StringIO()
+    assert _tui(state, io.StringIO("quit\n"), out) == 0
+    return waits, out.getvalue()
+
+
+def test_animated_shimmers_again_after_the_idle_interval(tmp_path, monkeypatch):
+    waits, text = _idle_tui(tmp_path, monkeypatch, "animated")
+    assert waits[0] == menu_module._SHIMMER_EVERY >= 15, "rare enough not to tire the eye"
+    frames = len(re.findall(r"\033\[\d+A\r", text))  # each shimmer frame walks up to the logo
+    assert frames == 2 * len(logo.frames(logo.TIERS[0])), "one entrance pass + one idle pass"
+
+
+def test_only_animated_mode_waits_to_shimmer(tmp_path, monkeypatch):
+    waits, text = _idle_tui(tmp_path, monkeypatch, "color")
+    assert waits == [] and "\033[1;38;5;231m" not in text
+
+
+def test_a_resize_clears_the_screen_and_redraws_for_the_new_size(tmp_path, monkeypatch):
+    """A window shrunk mid-session: the old frame may have re-wrapped, so the
+    cursor-up repaint cannot be trusted — clear, re-pick the tier, redraw."""
+    size = [os.terminal_size((100, 50))]
+    monkeypatch.setattr(menu_module, "_terminal_size", lambda _out: size[0])
+    keys = iter(["down", "quit"])
+
+    def read_key(_stdin, _out):
+        size[0] = os.terminal_size((100, 28))  # 28 rows: only the 4-row tier fits now
+        return next(keys)
+
+    monkeypatch.setattr(menu_module, "read_key", read_key)
+    state = MenuState(tmp_path / "c.json", True, True, "en", list(_ROSTER))
+    out = io.StringIO()
+    assert _tui(state, io.StringIO(), out) == 0
+    text = out.getvalue()
+    assert text.count("\033[H\033[2J") == 1
+    before, after = text.split("\033[H\033[2J")
+    assert "██╔══██╗" in before and "██╔══██╗" not in after
+    assert "/_/ \\_\\___\\___|_|" in after

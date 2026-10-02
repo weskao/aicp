@@ -159,11 +159,12 @@ right now": which steps run, message language, fallback CLI order, the
 skills install/upgrade view, a health check, and — see below — saving or
 loading those settings as a file.
 
-A logo sits above the menu when the window is big enough (at least 27 rows;
-three sizes, the widest that fits wins; below that, none). The **Logo** row
-cycles `color` (blue→cyan gradient) → `mono` (one blue) → `animated` (a glint
-sweeps across once on entry and after you pick it) → `off`. It follows
-`NO_COLOR`: with colour off you get the plain glyphs.
+A logo sits centred above the menu when the window is big enough (at least 27
+rows; three sizes, the widest that fits wins; below that, none), and it
+re-fits if you resize the window. The **Logo** row cycles `color` (blue→cyan
+gradient) → `mono` (one blue) → `animated` (a glint sweeps across once on
+entry, then again after about 20 s with no key; any key cuts it short) →
+`off`. It follows `NO_COLOR`: with colour off you get the plain glyphs.
 
 Every pick saves immediately — there's no save/discard step to forget, and
 quitting can never lose a change. `d` on the arrow-key screen is the way back

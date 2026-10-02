@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import sys
+import time
 from collections.abc import Callable, Iterator
 from typing import IO
 
@@ -233,22 +234,28 @@ def key_session(stdin: IO[str], stdout: IO[str]) -> Iterator[_Typed]:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 
 
-def pending(stdin: IO[str]) -> bool:
-    """Whether a keypress is already waiting to be read.
+def pending(stdin: IO[str], timeout: float = 0.0) -> bool:
+    """Whether a keypress is waiting to be read, or arrives within *timeout* seconds.
 
     An animation is time the menu is not listening, so it asks: with another
     key already queued, the frames still to draw are ones nobody will look
     at, and dropping them is what keeps a held-down key feeling immediate
-    instead of replaying a backlog of slides.
+    instead of replaying a backlog of slides. A *timeout* is the idle logo
+    shimmer's timer: wait that long for a key, and report whether one came.
     """
     try:
         if sys.platform == "win32":
             import msvcrt
 
-            return msvcrt.kbhit()
+            deadline = time.monotonic() + timeout
+            while not msvcrt.kbhit():
+                if time.monotonic() >= deadline:
+                    return False
+                time.sleep(0.05)
+            return True
         import select
 
-        return bool(select.select([stdin], [], [], 0)[0])
+        return bool(select.select([stdin], [], [], timeout)[0])
     except (AttributeError, ImportError, OSError, ValueError):
         return False
 

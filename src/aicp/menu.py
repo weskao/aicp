@@ -1570,38 +1570,76 @@ def _fit_columns(state: MenuState, out: IO[str]) -> tuple[int, int]:
 #: frame, and the notes that survive trimming. Below this the logo steps
 #: down a tier, then disappears, rather than squeezing the panel.
 _PANEL_ROWS = len(ROWS) + sum(1 for row in ROWS if row.group) + 6
-_ANIMATION_FRAME_SECONDS = 0.02
+#: One shimmer is ~17 frames, so ~0.5 s: a soft pass, not a flash.
+_SHIMMER_FRAME_SECONDS = 0.03
+#: Idle seconds between two shimmers in ``animated`` mode. Rare on purpose:
+#: motion in the corner of the eye every few seconds tires anyone reading the
+#: panel; one pass every 20 s with no keypress reads as alive, not busy.
+_SHIMMER_EVERY = 20.0
+
+#: ``(rows, indent)`` of a logo on screen; ``None`` when none was drawn.
+_Drawn = tuple[tuple[str, ...], int] | None
 
 
-def _banner(state: MenuState, out: IO[str], *, settle: bool = False) -> None:
-    """Print the logo above the panel and record the rows it took.
-
-    The logo is drawn once and never repainted with the panel, so the panel's
-    repaint arithmetic is untouched; changing the Logo row redraws both (see
-    :func:`_tui`). ``animated`` sweeps a glint across it, but only on a real
-    colour terminal; ``settle`` skips that for a redraw that is not an entrance.
-    """
-    state.logo_rows = 0
+def _logo_tier(state: MenuState, out: IO[str]) -> tuple[str, ...]:
+    """The tier to draw (``()`` = none), its height recorded for the panel's trim."""
     size = _terminal_size(out)
     rows = () if state.logo == "off" else logo.pick(size.columns, size.lines, _PANEL_ROWS)
+    state.logo_rows = len(rows) + 1 if rows else 0
+    return rows
+
+
+def _print_logo(state: MenuState, out: IO[str], rows: tuple[str, ...], panel_width: int) -> _Drawn:
+    """Print *rows* centred over a panel *panel_width* wide, then a blank line.
+
+    Never past the terminal's last safe column: the panel fits the terminal,
+    but the clamp keeps that true even if it some day does not.
+    """
     if not rows:
-        return
-    colour = color_supported(out)
-    painted = logo.paint(rows, state.logo, colour)
-    state.logo_rows = len(painted) + 1
-    if state.logo == "animated" and colour and not settle:
-        for line in painted:
-            print(line, file=out)
-        print(file=out)
-        for frame in logo.frames(rows):
-            out.write(f"\033[{state.logo_rows}A")
-            out.write("".join(f"{line}\033[K\n" for line in frame) + "\033[K\n")
-            out.flush()
-            time.sleep(_ANIMATION_FRAME_SECONDS)
-        return
-    for line in painted:
+        return None
+    indent = max(0, min((panel_width - len(rows[0])) // 2, _terminal_size(out).columns - 1 - len(rows[0])))
+    for line in logo.paint(rows, state.logo, color_supported(out), indent=indent):
         print(line, file=out)
     print(file=out)
+    return rows, indent
+
+
+def _shimmer(out: IO[str], drawn: tuple[tuple[str, ...], int], below: int, stdin: IO[str]) -> None:
+    """Sweep the glint across the logo sitting *below* rows above the cursor.
+
+    Rewrites only the logo's own rows and walks back down, so the panel is
+    never touched. A keypress cuts the sweep short on the at-rest frame.
+    """
+    rows, indent = drawn
+    up = len(rows) + 1 + below
+    frames = logo.frames(rows, indent)
+    for i, frame in enumerate(frames):
+        if i < len(frames) - 1 and pending(stdin):
+            frame = frames[-1]
+        out.write(f"\033[{up}A\r" + "".join(f"{line}\033[K\n" for line in frame) + f"\033[{up - len(rows)}B\r")
+        out.flush()
+        if frame is frames[-1]:
+            return
+        time.sleep(_SHIMMER_FRAME_SECONDS)
+
+
+def _draw(
+    state: MenuState, selected: int, out: IO[str], stdin: IO[str], *, entrance: bool
+) -> tuple[list[str], _Drawn]:
+    """The logo (when one fits) centred over the panel, then the panel.
+
+    The logo is never part of the panel's repaint, so the panel's arithmetic
+    is untouched; :func:`_tui` erases and redraws both when the logo has to
+    change. ``entrance`` plays one shimmer in ``animated`` mode.
+    """
+    rows = _logo_tier(state, out)
+    lines = _panel(state, selected, out)
+    drawn = _print_logo(state, out, rows, width(lines[0]))
+    for line in lines:
+        print(line, file=out)
+    if drawn and entrance and state.logo == "animated" and color_supported(out):
+        _shimmer(out, drawn, _frame_rows(lines, out), stdin)
+    return lines, drawn
 
 
 def _panel(
@@ -1983,7 +2021,9 @@ def config_menu(
 
 def _numbered(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
     """Typed-choice surface. EOF is "quit" — never a block, so CI is safe."""
-    _banner(state, out)
+    rows = _logo_tier(state, out)
+    if rows:
+        _print_logo(state, out, rows, width(_panel(state, out=out)[0]))
     while True:
         for line in _panel(state, out=out):
             print(line, file=out)
@@ -2226,25 +2266,45 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
     to a language with narrower rows would otherwise leave the previous,
     wider frame's right-hand border on screen as a second column of │."""
     selected = 1
-    _banner(state, out)
-    shown_logo = state.logo
-    lines = _panel(state, selected, out)
-    for line in lines:
-        print(line, file=out)
+    lines, drawn = _draw(state, selected, out, stdin, entrance=True)
+    shown_logo, shown_lang = state.logo, state.lang
+    drawn_size = _terminal_size(out)
+    #: False once something printed between the logo and the panel (the
+    #: Skills report): the logo is no longer where the shimmer would look.
+    logo_above = True
     try:
         with key_session(stdin, out) as typed:
             while True:
-                if state.logo != shown_logo:
-                    # The Logo row changed it (a step, r, R or an import):
+                if state.logo != shown_logo or (drawn and state.lang != shown_lang):
+                    # The Logo row changed it (a step, r, R or an import), or
+                    # a language switch resized the panel it is centred over:
                     # the logo sits above the panel's repaint region, so
-                    # swapping it means erasing both and drawing both again.
-                    shown_logo = state.logo
-                    out.write(f"\033[{_frame_rows(lines, out) + state.logo_rows}A\033[J")
-                    _banner(state, out)
-                    lines = _panel(state, selected, out)
-                    for line in lines:
-                        print(line, file=out)
+                    # either means erasing both and drawing both again.
+                    above = state.logo_rows if logo_above else 0
+                    out.write(f"\033[{_frame_rows(lines, out) + above}A\033[J")
+                    lines, drawn = _draw(state, selected, out, stdin, entrance=state.logo != shown_logo)
+                    drawn_size, logo_above = _terminal_size(out), True
+                shown_logo, shown_lang = state.logo, state.lang
+                while (
+                    drawn
+                    and logo_above
+                    and state.logo == "animated"
+                    and color_supported(out)
+                    and not pending(stdin, _SHIMMER_EVERY)
+                ):
+                    if _terminal_size(out) != drawn_size:
+                        break  # rows re-wrapped: the logo is not where it was drawn
+                    _shimmer(out, drawn, _frame_rows(lines, out), stdin)
                 key = read_key(stdin, out)
+                if _terminal_size(out) != drawn_size:
+                    # Resized while waiting for that key. Every line on
+                    # screen may have re-wrapped, so the row count the
+                    # cursor-up walk relies on is gone: clear the screen and
+                    # draw from the top, tier and centring re-picked for the
+                    # new size, before the key's own repaint trusts the count.
+                    out.write("\033[H\033[2J")
+                    lines, drawn = _draw(state, selected, out, stdin, entrance=False)
+                    drawn_size, logo_above = _terminal_size(out), True
                 if key == "quit":
                     return 0
                 if key == "up":
@@ -2292,6 +2352,7 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
                         # An action prints below the frame; redraw under its
                         # output rather than scrolling back up over what it
                         # just said.
+                        logo_above = False
                         lines = _panel(state, selected, out)
                         for line in lines:
                             print(line, file=out)

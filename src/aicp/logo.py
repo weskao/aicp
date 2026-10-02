@@ -21,7 +21,7 @@ __all__ = ["DEFAULT_MODE", "INDENT", "MODES", "TIERS", "frames", "paint", "pick"
 MODES: tuple[str, ...] = ("color", "mono", "animated", "off")
 DEFAULT_MODE = "color"
 
-#: Columns of margin left of the logo — lines up with the panel's text.
+#: Least margin left of the logo; the menu centres it over the panel instead.
 INDENT = 2
 
 #: Widest first. Every row of a tier is the same width.
@@ -72,14 +72,16 @@ def pick(columns: int, lines: int, reserve: int) -> tuple[str, ...]:
     return ()
 
 
-def paint(rows: Sequence[str], mode: str, colour: bool, glint: int | None = None) -> list[str]:
-    """*rows* indented and coloured for *mode*.
+def paint(
+    rows: Sequence[str], mode: str, colour: bool, glint: int | None = None, indent: int = INDENT
+) -> list[str]:
+    """*rows* indented by *indent* columns and coloured for *mode*.
 
     ``glint`` is the column the animated shimmer is at (``None`` = at rest).
     Plain glyphs when *colour* is off or the mode is ``off``/unknown-to-paint;
     the caller decides whether to draw ``off`` at all.
     """
-    pad = " " * INDENT
+    pad = " " * indent
     if not colour or mode == "off":
         return [pad + row.rstrip() for row in rows]
     span = max(1, len(rows[0]) - 1)
@@ -107,11 +109,11 @@ def paint(rows: Sequence[str], mode: str, colour: bool, glint: int | None = None
     return out
 
 
-def frames(rows: Sequence[str]) -> list[list[str]]:
+def frames(rows: Sequence[str], indent: int = INDENT) -> list[list[str]]:
     """The shimmer: a glint sweeping left to right, ending at rest.
 
     The last frame is the static ``color`` painting, so the animation settles
     into exactly what the non-animated mode shows.
     """
     sweep = range(-_GLINT_REACH, len(rows[0]) + _GLINT_REACH, _GLINT_STEP)
-    return [paint(rows, "animated", True, x) for x in sweep] + [paint(rows, "animated", True)]
+    return [paint(rows, "animated", True, x, indent) for x in sweep] + [paint(rows, "animated", True, indent=indent)]
