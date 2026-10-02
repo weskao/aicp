@@ -1572,10 +1572,9 @@ def _fit_columns(state: MenuState, out: IO[str]) -> tuple[int, int]:
 _PANEL_ROWS = len(ROWS) + sum(1 for row in ROWS if row.group) + 6
 #: One shimmer is ~17 frames, so ~0.5 s: a soft pass, not a flash.
 _SHIMMER_FRAME_SECONDS = 0.03
-#: Idle seconds between two shimmers in ``animated`` mode. Rare on purpose:
-#: motion in the corner of the eye every few seconds tires anyone reading the
-#: panel; one pass every 20 s with no keypress reads as alive, not busy.
-_SHIMMER_EVERY = 20.0
+#: Idle seconds between two shimmers in ``animated`` mode (the default). Each
+#: pass is ~0.5 s and any keypress cuts it short.
+_SHIMMER_EVERY = 5.0
 
 #: ``(rows, indent)`` of a logo on screen; ``None`` when none was drawn.
 _Drawn = tuple[tuple[str, ...], int] | None

@@ -79,11 +79,11 @@ def test_logo_setting_validates(tmp_path, monkeypatch, capsys):
     path = tmp_path / "c.json"
     monkeypatch.setenv("AICP_CONFIG", str(path))
     monkeypatch.delenv("AICP_LOGO", raising=False)
-    assert resolve().logo == "color"
+    assert resolve().logo == "animated"
     path.write_text(json.dumps({"aicp_logo": "mono"}), encoding="utf-8")
     assert resolve().logo == "mono"
     path.write_text(json.dumps({"aicp_logo": "neon"}), encoding="utf-8")
-    assert resolve().logo == "color"
+    assert resolve().logo == "animated"
     assert "AICP_LOGO" in capsys.readouterr().err
 
 
@@ -114,7 +114,7 @@ def test_the_logo_row_cycles_and_persists(tmp_path, monkeypatch):
     _size(monkeypatch, 80, 50)
     path = tmp_path / "c.json"
     config_menu(path=path, stdin=io.StringIO(f"{_logo_row()}\nq\n"), stdout=io.StringIO())
-    assert json.loads(path.read_text(encoding="utf-8"))["aicp_logo"] == "mono"
+    assert json.loads(path.read_text(encoding="utf-8"))["aicp_logo"] == "off"
 
 
 def test_changing_the_logo_row_in_the_tui_erases_logo_and_panel(tmp_path, monkeypatch):
@@ -123,7 +123,7 @@ def test_changing_the_logo_row_in_the_tui_erases_logo_and_panel(tmp_path, monkey
     keys = "down\n" * (_logo_row() - 1) + "right\nquit\n"
     out = io.StringIO()
     assert _tui(state, io.StringIO(keys), out) == 0
-    assert state.logo == "mono"
+    assert state.logo == "off"
     # The erase walks up past the panel AND the logo's 7 rows (6 + blank).
     erase = re.findall(r"\033\[(\d+)A\033\[J", out.getvalue())
     panel_rows = len(menu_module._panel(state, _logo_row(), out))
@@ -173,7 +173,7 @@ def _idle_tui(tmp_path, monkeypatch, mode):
 
 def test_animated_shimmers_again_after_the_idle_interval(tmp_path, monkeypatch):
     waits, text = _idle_tui(tmp_path, monkeypatch, "animated")
-    assert waits[0] == menu_module._SHIMMER_EVERY >= 15, "rare enough not to tire the eye"
+    assert waits[0] == menu_module._SHIMMER_EVERY == 5.0
     frames = len(re.findall(r"\033\[\d+A\r", text))  # each shimmer frame walks up to the logo
     assert frames == 2 * len(logo.frames(logo.TIERS[0])), "one entrance pass + one idle pass"
 

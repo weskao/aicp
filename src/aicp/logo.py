@@ -19,7 +19,7 @@ from ._utils import BLUE, DIM, RESET
 __all__ = ["DEFAULT_MODE", "INDENT", "MODES", "TIERS", "frames", "paint", "pick"]
 
 MODES: tuple[str, ...] = ("color", "mono", "animated", "off")
-DEFAULT_MODE = "color"
+DEFAULT_MODE = "animated"
 
 #: Least margin left of the logo; the menu centres it over the panel instead.
 INDENT = 2
