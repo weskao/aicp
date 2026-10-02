@@ -62,6 +62,7 @@ from . import (
     agents,
     gitflow,
     i18n,
+    logo,
     skills,
     telegram_store,
     update_check,
@@ -93,7 +94,9 @@ from ._utils import (
 from .config import (
     _KEY_RE,
     _SYSTEM_RESOLVED,
+    DEFAULT_LOGO,
     DENYLIST,
+    LOGO_MODES,
     TELEGRAM_CHAT_ID_KEY,
     Settings,
     _read_json_object,
@@ -145,6 +148,11 @@ class MenuState:
     lang: str
     chain: list[str]
     update_check: bool = True
+    logo: str = DEFAULT_LOGO
+    #: Rows the logo above the panel occupies (0 = none drawn). The panel
+    #: sheds its notes against the terminal height minus this, so logo + panel
+    #: always fit and the repaint arithmetic only ever concerns the panel.
+    logo_rows: int = 0
     #: Probe caches for the two action rows. The panel repaints on every
     #: keypress, and both of those rows show live status in their value
     #: column — walking the filesystem and shelling out to git once per
@@ -169,6 +177,7 @@ class MenuState:
             lang=settings.lang,
             chain=list(settings.cli_chain),
             update_check=settings.update_check,
+            logo=settings.logo,
             telegram_chat_id=settings.values.get(TELEGRAM_CHAT_ID_KEY, ""),
         )
 
@@ -247,6 +256,21 @@ def _toggle_push(state: MenuState, _direction: int) -> str:
 def _toggle_update_check(state: MenuState, _direction: int) -> str:
     state.update_check = not state.update_check
     return "1" if state.update_check else "0"
+
+
+def _rotate_logo(state: MenuState, direction: int) -> str:
+    state.logo = LOGO_MODES[(LOGO_MODES.index(state.logo) + direction) % len(LOGO_MODES)]
+    return state.logo
+
+
+def _logo_value(state: MenuState) -> str:
+    names = {
+        "color": ("config_logo_color", "Color"),
+        "mono": ("config_logo_mono", "Mono"),
+        "animated": ("config_logo_animated", "Animated"),
+        "off": ("config_off", "Off"),
+    }
+    return _t(state.lang, *names[state.logo])
 
 
 def _toggle_lang(state: MenuState, _direction: int) -> str:
@@ -1170,6 +1194,7 @@ def _import_action(state: MenuState, stdin: IO[str], out: IO[str]) -> tuple[list
     state.lang = refreshed.lang
     state.chain = refreshed.chain
     state.update_check = refreshed.update_check
+    state.logo = refreshed.logo
     state.health = None
     messages = [
         f"  {GREEN}" + _t(state.lang, "settings_import_done", "✓ imported %s setting(s)", len(accepted)) + RESET
@@ -1368,6 +1393,18 @@ ROWS: tuple[Row, ...] = (
         cycle=_toggle_update_check,
     ),
     Row(
+        key="AICP_LOGO",
+        group=None,
+        label=("config_logo", "Logo"),
+        help=(
+            "config_help_logo",
+            "The banner above this menu: color, mono, animated (a glint sweeps once), or off.",
+        ),
+        value=_logo_value,
+        accent=lambda s: DIM if s.logo == "off" else GREEN,
+        cycle=_rotate_logo,
+    ),
+    Row(
         key="AICP_CLI_ORDER",
         group=None,
         label=("config_cli_order", "AI CLI order"),
@@ -1529,6 +1566,44 @@ def _fit_columns(state: MenuState, out: IO[str]) -> tuple[int, int]:
     return frame, max(frame - 6 - max(width(label) for label in labels), _MIN_VALUE_COLUMNS)
 
 
+#: Rows the panel needs beside the logo: every row and group heading, the
+#: frame, and the notes that survive trimming. Below this the logo steps
+#: down a tier, then disappears, rather than squeezing the panel.
+_PANEL_ROWS = len(ROWS) + sum(1 for row in ROWS if row.group) + 6
+_ANIMATION_FRAME_SECONDS = 0.02
+
+
+def _banner(state: MenuState, out: IO[str], *, settle: bool = False) -> None:
+    """Print the logo above the panel and record the rows it took.
+
+    The logo is drawn once and never repainted with the panel, so the panel's
+    repaint arithmetic is untouched; changing the Logo row redraws both (see
+    :func:`_tui`). ``animated`` sweeps a glint across it, but only on a real
+    colour terminal; ``settle`` skips that for a redraw that is not an entrance.
+    """
+    state.logo_rows = 0
+    size = _terminal_size(out)
+    rows = () if state.logo == "off" else logo.pick(size.columns, size.lines, _PANEL_ROWS)
+    if not rows:
+        return
+    colour = color_supported(out)
+    painted = logo.paint(rows, state.logo, colour)
+    state.logo_rows = len(painted) + 1
+    if state.logo == "animated" and colour and not settle:
+        for line in painted:
+            print(line, file=out)
+        print(file=out)
+        for frame in logo.frames(rows):
+            out.write(f"\033[{state.logo_rows}A")
+            out.write("".join(f"{line}\033[K\n" for line in frame) + "\033[K\n")
+            out.flush()
+            time.sleep(_ANIMATION_FRAME_SECONDS)
+        return
+    for line in painted:
+        print(line, file=out)
+    print(file=out)
+
+
 def _panel(
     state: MenuState,
     selected: int | None = None,
@@ -1665,7 +1740,7 @@ def _panel(
     # notes are what a short window gives up. Prefer dropping help text,
     # blanks, and ✓ detail lines before ⚠ warnings; the key-hint footer is
     # always last and is what someone stuck in an unfamiliar menu needs.
-    while notes and len(rows) + len(notes) + 4 > _terminal_size(out).lines:
+    while notes and len(rows) + len(notes) + 4 > _terminal_size(out).lines - state.logo_rows:
         drop = next(
             (i for i, note in enumerate(notes[:-1]) if _WARN not in note),
             0,
@@ -1716,6 +1791,7 @@ _CYCLE_DEFAULTS: dict[str, Callable[[MenuState], None]] = {
     "AICP_DO_COMMIT": lambda s: setattr(s, "do_commit", True),
     "AICP_DO_PUSH": lambda s: setattr(s, "do_push", True),
     "AICP_LANG": lambda s: setattr(s, "lang", "en"),
+    "AICP_LOGO": lambda s: setattr(s, "logo", DEFAULT_LOGO),
     "AICP_UPDATE_CHECK": lambda s: setattr(s, "update_check", True),
     "AICP_CLI_ORDER": lambda s: setattr(s, "chain", list(_ROSTER_NAMES)),
 }
@@ -1907,6 +1983,7 @@ def config_menu(
 
 def _numbered(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
     """Typed-choice surface. EOF is "quit" — never a block, so CI is safe."""
+    _banner(state, out)
     while True:
         for line in _panel(state, out=out):
             print(line, file=out)
@@ -2149,12 +2226,24 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
     to a language with narrower rows would otherwise leave the previous,
     wider frame's right-hand border on screen as a second column of │."""
     selected = 1
+    _banner(state, out)
+    shown_logo = state.logo
     lines = _panel(state, selected, out)
     for line in lines:
         print(line, file=out)
     try:
         with key_session(stdin, out) as typed:
             while True:
+                if state.logo != shown_logo:
+                    # The Logo row changed it (a step, r, R or an import):
+                    # the logo sits above the panel's repaint region, so
+                    # swapping it means erasing both and drawing both again.
+                    shown_logo = state.logo
+                    out.write(f"\033[{_frame_rows(lines, out) + state.logo_rows}A\033[J")
+                    _banner(state, out)
+                    lines = _panel(state, selected, out)
+                    for line in lines:
+                        print(line, file=out)
                 key = read_key(stdin, out)
                 if key == "quit":
                     return 0

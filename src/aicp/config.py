@@ -88,6 +88,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .contracts import ROSTER
+from .logo import DEFAULT_MODE as DEFAULT_LOGO
+from .logo import MODES as LOGO_MODES
 
 #: The pre-JSON config file this loader migrates from, once, on first read of
 #: the default (non-``AICP_CONFIG``-overridden) location. Never written back
@@ -154,6 +156,7 @@ class Settings:
     do_push: bool = True
     update_check: bool = True
     lang: str = "en"
+    logo: str = DEFAULT_LOGO
     tz: str = _DEFAULT_TZ
     cli_chain: tuple[str, ...] = _ROSTER_NAMES
     values: Mapping[str, str] = field(default_factory=dict)
@@ -345,6 +348,13 @@ def _language(raw: str | None) -> str:
     return "en"
 
 
+def _logo(raw: str | None) -> str:
+    if raw is None or raw in LOGO_MODES:
+        return raw or DEFAULT_LOGO
+    _warn(f"ignoring AICP_LOGO={raw} (expected {', '.join(LOGO_MODES)}) — using {DEFAULT_LOGO}")
+    return DEFAULT_LOGO
+
+
 def _timezone(raw: str | None) -> str:
     if raw is None:
         return _DEFAULT_TZ
@@ -411,6 +421,7 @@ def resolve(env: Mapping[str, str] | None = None) -> Settings:
         do_push=_boolean("AICP_DO_PUSH", values.get("AICP_DO_PUSH")),
         update_check=_boolean("AICP_UPDATE_CHECK", values.get("AICP_UPDATE_CHECK")),
         lang=_language(values.get("AICP_LANG")),
+        logo=_logo(values.get("AICP_LOGO")),
         tz=_timezone(values.get("AICP_TZ")),
         cli_chain=tuple(resolve_cli_chain(values.get("AICP_CLI_ORDER"))),
         values=values,

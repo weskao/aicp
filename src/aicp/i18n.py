@@ -146,6 +146,10 @@ CATALOG: dict[str, str] = {
     "config_do_push": "執行 /safe-git-push 階段",
     "config_language": "語言",
     "config_update_check": "檢查更新",
+    "config_logo": "標誌",
+    "config_logo_color": "彩色",
+    "config_logo_mono": "單色",
+    "config_logo_animated": "動畫",
     "config_cli_order": "AI CLI 順序",
     # The feature is called Skills in every AI CLI that has it; translating it
     # would only make the row harder to match to what the vendors call it.
@@ -162,6 +166,7 @@ CATALOG: dict[str, str] = {
     "config_help_push": "關閉時只做 commit 就停下，分支會領先遠端。",
     "config_help_lang": "所有訊息的語言，包含 Telegram 通知。",
     "config_help_update_check": "開啟時，背景查詢 PyPI（每 10 分鐘最多一次），若有更新的 aicp-cli 就在指令結束後詢問是否更新。",
+    "config_help_logo": "選單上方的標誌：彩色、單色、動畫（光芒掃過一次），或關閉。",
     "config_help_cli": "完整的 fallback 順序，由左到右依序嘗試；←/→ 可輪替順序，Agents 列可逐一調整。未安裝的 CLI 會自動跳過。",
     "config_help_skills": "把 aicp 的 /commit 與 /safe-git-push 裝進每個 AI CLI，你自己的同名檔案一律保留。",
     "config_help_agents": "aicp 依序嘗試的 AI CLI。⏎ 進入後可排序、開關、編輯或新增。",

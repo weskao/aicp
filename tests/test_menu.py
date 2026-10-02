@@ -166,8 +166,13 @@ def test_r_then_anything_else_cancels_the_row_reset(tmp_path):
     assert json.loads(path.read_text(encoding="utf-8"))["aicp_do_commit"] == "0"
 
 
-def test_r_on_an_action_row_changes_nothing_and_notes_it(tmp_path):
+def test_r_on_an_action_row_changes_nothing_and_notes_it(tmp_path, monkeypatch):
+    from aicp import menu as menu_module
     from aicp.menu import _tui
+
+    # Taller than the 80x24 default: with the Logo row the panel needs 25+
+    # rows to keep every note, and a short window sheds the note under test.
+    monkeypatch.setattr(menu_module, "_terminal_size", lambda _out: os.terminal_size((80, 40)))
 
     target = _row_number("config_skills")
     path = tmp_path / "menu.json"
@@ -573,6 +578,7 @@ def test_rows_are_data_addressed_by_index(menu):
         "AICP_DO_PUSH",
         "AICP_LANG",
         "AICP_UPDATE_CHECK",
+        "AICP_LOGO",
         "AICP_CLI_ORDER",
         "",
         "AICP_TELEGRAM_CHAT_ID",
