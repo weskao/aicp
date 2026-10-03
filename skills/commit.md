@@ -8,9 +8,12 @@ Git commit current changes, split into logical batches if needed.
 
 ## Secret-scan behavior
 
-The pre-command aicp gate ignores key-like text only in URL paths, not in
-ordinary text or URL query values. This prevents hyphenated article slugs from
-blocking `/commit` without weakening sensitive-string detection.
+The pre-command aicp gate ignores key-like text only in URL paths and when
+the match runs straight into an ellipsis (`Bearer eyJhbGciOiJIUzI1NiIs...`,
+`sk-abc…`) — a truncated example, not a credential. Everything else,
+including URL query values, is flagged. This keeps hyphenated article slugs
+and documentation samples from blocking `/commit` without weakening
+sensitive-string detection.
 
 ## Project override (check FIRST)
 

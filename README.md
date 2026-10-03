@@ -514,8 +514,11 @@ Seven fixed patterns are checked (OpenAI-style `sk-…` keys, GitHub PATs and
 App tokens, AWS access key IDs, bearer tokens, and PEM private-key blocks) —
 deliberately prefix/format checks only, with **no entropy heuristic**: that
 was tried and rejected upstream as the main source of false positives (this
-project's own API-key-shaped test fixtures tripped it). A false positive is
-bypassed once with `AICP_SKIP_SECRET_SCAN=1`.
+project's own API-key-shaped test fixtures tripped it). Two lookalikes are
+deliberately ignored: a key inside a URL *path* (article slugs) and a key cut
+short by an ellipsis (`Bearer eyJhbGciOiJIUzI1NiIs...` — a documentation
+example, not a credential). Any other false positive is bypassed once with
+`AICP_SKIP_SECRET_SCAN=1`.
 
 A file the scanner can't read as text — genuinely binary, or a UTF-16 `.env`
 full of NUL bytes — is never silently skipped: it's reported as "not
