@@ -56,6 +56,10 @@ PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 _URL_PATH = re.compile(r"https?://[^/\s?#]+(?P<path>/[^\s?#]*)")
 
+#: A key cut short by an ellipsis (``Bearer eyJhbGciOiJIUzI1NiIs...``) is a
+#: documentation example, not a credential — nobody pastes a real one truncated.
+_ELLIPSIS = re.compile(r"\.{3}|…")
+
 #: How much of a file is inspected for a NUL byte before calling it binary —
 #: the same "first block decides" rule `grep -I` applies.
 _BINARY_SNIFF_BYTES = 8192
@@ -82,12 +86,24 @@ def _hit(file: str, lineno: int, content: str) -> str | None:
     the location plus the pattern's name survive into the returned string."""
     for pattern, name in PATTERNS:
         for match in pattern.finditer(content):
+            if _truncated(content, match):
+                continue
             if not any(
                 url.start("path") <= match.start() and match.end() <= url.end("path")
                 for url in _URL_PATH.finditer(content)
             ):
                 return f"{file}:{lineno}  looks like {name}"
     return None
+
+
+def _truncated(content: str, match: re.Match[str]) -> bool:
+    """True when *match* runs straight into an ellipsis. A pattern whose
+    character class admits ``.`` (bearer) swallows the dots itself, so they
+    are peeled off the match end before looking."""
+    end = match.end()
+    while end > match.start() and content[end - 1] == ".":
+        end -= 1
+    return _ELLIPSIS.match(content, end) is not None
 
 
 def _git(cwd: Path, *args: str) -> str:

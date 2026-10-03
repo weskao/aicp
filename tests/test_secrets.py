@@ -42,6 +42,9 @@ BENIGN: tuple[str, ...] = (
     "sk-automation",
     "https://example.com/elon-musk-authorized-biography",
     "Bearer short",
+    "Authorization: Bearer eyJhbGciOiJIUzI1NiIs...",
+    "export OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz0123…",
+    "ghp_1234567890abcdefghijklmno... (truncated)",
     "AKIAZ demo",
     "ghp_short",
     "a perfectly ordinary configuration line",
@@ -95,6 +98,11 @@ def test_benign_lookalikes_are_not_flagged(repo: Path, line: str) -> None:
     result = scan(repo)
     assert result.hits == ()
     assert result.ok
+
+
+def test_trailing_period_is_not_an_ellipsis(repo: Path) -> None:
+    (repo / "notes.txt").write_text(f"the key is {SAMPLES[7][1]}.\n", encoding="utf-8")
+    assert scan(repo).hits
 
 
 def test_sensitive_value_in_a_url_query_is_flagged(repo: Path) -> None:
