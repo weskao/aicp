@@ -203,3 +203,17 @@ def test_a_resize_clears_the_screen_and_redraws_for_the_new_size(tmp_path, monke
     before, after = text.split("\033[H\033[2J")
     assert "██╔══██╗" in before and "██╔══██╗" not in after
     assert "/_/ \\_\\___\\___|_|" in after
+
+
+@pytest.mark.parametrize("columns", [50, 100])
+@pytest.mark.parametrize("lines", [30, 45, 60])
+def test_logo_and_panel_leave_the_last_row_free(tmp_path, monkeypatch, columns, lines):
+    """Every row of the frame ends in a newline, so a frame that fills the
+    terminal scrolls one row per repaint and stacks the logo in scrollback.
+    At 50 columns the panel is wider than its floor allows and wraps."""
+    _size(monkeypatch, columns, lines)
+    state = MenuState(tmp_path / "c.json", True, True, "en", list(_ROSTER))
+    for selected in range(1, len(ROWS) + 1):
+        panel, drawn = menu_module._draw(state, selected, io.StringIO(), io.StringIO(), entrance=False)
+        if drawn:
+            assert state.logo_rows + menu_module._frame_rows(panel, io.StringIO()) <= lines - 1, selected

@@ -1633,6 +1633,12 @@ def _draw(
     """
     rows = _logo_tier(state, out)
     lines = _panel(state, selected, out)
+    if rows and state.logo_rows + _frame_rows(lines, out) >= _terminal_size(out).lines:
+        # The panel wraps (a terminal narrower than its floor) or fills the
+        # last row: the frame would scroll, stacking the logo in scrollback,
+        # and the shimmer's walk up would land on the panel. Drop the logo.
+        rows, state.logo_rows = (), 0
+        lines = _panel(state, selected, out)
     drawn = _print_logo(state, out, rows, width(lines[0]))
     for line in lines:
         print(line, file=out)
