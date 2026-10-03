@@ -1,3 +1,12 @@
+## [0.20.1] - 2026-10-03
+
+### 🐛 Bug Fixes
+
+- **secret-scan:** Ignore truncated key examples
+
+### 📚 Documentation
+
+- **secret-scan:** Document ellipsis exemption
 ## [0.20.0] - 2026-10-02
 
 ### 🚀 Features
