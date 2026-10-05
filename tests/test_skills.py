@@ -205,6 +205,20 @@ def test_memory_file_and_config_dir_rewritten_per_cli(configured, name, dir_ref,
     assert ".claude" not in text
 
 
+@pytest.mark.parametrize("skill", sorted(skills.SKILLS))
+def test_installed_skill_frontmatter_names_the_skill(configured, skill):
+    """agy (and codex/opencode) silently drop a SKILL.md whose frontmatter
+    has no ``name:`` — the vendored commit.md once shipped with only
+    ``description:``, so ``/commit`` vanished from agy."""
+    h = configured("agy")
+    skills.install([cli("agy")], home=h)
+
+    target = skills.target_path(cli("agy"), skill, home=h)
+    skill_md = target / "SKILL.md" if skills.SKILLS[skill].is_dir else target
+    frontmatter = skill_md.read_text(encoding="utf-8").split("---\n", 2)[1]
+    assert f"name: {skill}\n" in frontmatter
+
+
 def test_claude_install_keeps_its_own_paths(configured):
     """Rewriting is a no-op for claude itself — nothing to break."""
     h = configured("claude")

@@ -1,4 +1,5 @@
 ---
+name: commit
 description: Stage and commit all changes, grouped into logical Conventional Commits batches.
 ---
 
