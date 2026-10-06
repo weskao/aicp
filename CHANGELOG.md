@@ -1,3 +1,12 @@
+## [0.20.4] - 2026-10-06
+
+### 🐛 Bug Fixes
+
+- **skills:** Add name to vendored commit frontmatter
+
+### ⚙️ Miscellaneous Tasks
+
+- Add Dependabot config (github-actions, uv)
 ## [0.20.3] - 2026-10-04
 
 ### 💼 Other
