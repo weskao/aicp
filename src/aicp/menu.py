@@ -586,7 +586,7 @@ def _agents_lines(state: MenuState, selected: int, message: str | None = None) -
         + _t(state.lang, "agents_tui_keys", "↑↓ select · ←→ move · t to #1 · space on/off")
         + f"{RESET}",
         f"{DIM}"
-        + _t(state.lang, "agents_tui_keys2", "e edit · a add · r reset · ⏎ actions · q back")
+        + _t(state.lang, "agents_tui_keys2", "e edit · a add · r reset · ⏎ actions · q/Ctrl+C back · auto-save")
         + f"{RESET}",
     ]
     return render_panel(body, _t(state.lang, "config_agents", "Agents"), CYAN, notes=notes)
@@ -1965,7 +1965,7 @@ def _update_lines(lang: str, found: update_check.UpdateAvailable, notes_url: str
         body.append((label, f"{DIM}{detail}{RESET}"))
     notes = [
         _t(lang, "update_notes", "Release notes: %s", notes_url),
-        f"{DIM}" + _t(lang, "update_keys", "↑↓ select · ⏎ confirm · q skip") + f"{RESET}",
+        f"{DIM}" + _t(lang, "update_keys", "↑↓ select · ⏎ confirm · q/Ctrl+C skip") + f"{RESET}",
     ]
     title = "✨ " + _t(
         lang, "update_available", "aicp %s is available (you have %s)", found.latest, found.current
