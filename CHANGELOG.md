@@ -1,3 +1,8 @@
+## [0.20.5] - 2026-10-08
+
+### 🐛 Bug Fixes
+
+- **menu:** Document ctrl-c shortcuts
 ## [0.20.4] - 2026-10-06
 
 ### 🐛 Bug Fixes
