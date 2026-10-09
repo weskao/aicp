@@ -1,3 +1,8 @@
+## [0.20.6] - 2026-10-09
+
+### ⚡ Performance
+
+- **skills:** Speed up vendored safe-git-push
 ## [0.20.5] - 2026-10-08
 
 ### 🐛 Bug Fixes
