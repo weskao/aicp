@@ -512,21 +512,23 @@ def _inspect(cli: CLI, skill: str, home: Path | None) -> tuple[str, str | None]:
         return MISSING, None
 
     platform = _platform(cli)
+    expected = _expected(spec, platform)
     record = _load_state(home).get(str(target)) or _legacy_record(spec, target, platform)
-    if not record:
-        # Nothing recorded. Content identical to what this version installs is
-        # still ours (a wiped state file, a config dir copied to a new
-        # machine); anything else is the user's.
-        expected = _expected(spec, platform)
-        if expected and _matches(target, expected):
-            return CURRENT, __version__
-        return FOREIGN, None
+    if record and _matches(target, record["files"]):
+        version = record["version"]
+        ours, shipped = _as_tuple(version), _as_tuple(__version__)
+        # Same version but different bytes is older too: vendored content can
+        # change between releases without a bump (a dev checkout).
+        stale = ours < shipped or (ours == shipped and expected and record["files"] != expected)
+        return (OURS_OLDER if stale else CURRENT), version
 
-    if not _matches(target, record["files"]):
-        return FOREIGN, None  # ours once, hand-edited since — never overwrite
-    version = record["version"]
-    state = OURS_OLDER if _as_tuple(version) < _as_tuple(__version__) else CURRENT
-    return state, version
+    # No record, or one the disk no longer matches. Content identical to what
+    # this version installs is still ours (a wiped state file, a config dir
+    # copied to a new machine, a hand edit synced back to the shipped bytes);
+    # anything else is the user's — never overwrite it.
+    if expected and _matches(target, expected):
+        return CURRENT, __version__
+    return FOREIGN, None
 
 
 def detect(cli: CLI, skill: str, home: Path | None = None) -> str:
@@ -547,13 +549,24 @@ def missing_skills(cli: CLI, home: Path | None = None) -> tuple[str, ...]:
     nudge about when the CLI itself isn't installed.
     """
     root = config_root(cli, home)
-    if not root.is_dir():
+    try:
+        root.stat()
+    except OSError:
         return ()
     return tuple(
         name
         for name in _platform(cli).skills
-        if not target_path(cli, name, home).exists()
+        if not _exists(target_path(cli, name, home))
     )
+
+
+def _exists(path: Path) -> bool:
+    """Path.exists() with ``Path.stat`` directly reached for the hot path."""
+    try:
+        path.stat()
+        return True
+    except OSError:
+        return False
 
 
 def full_status(
@@ -719,6 +732,13 @@ def install(
                 action = NOT_INSTALLED
             elif state == CURRENT:
                 action = UP_TO_DATE
+                # Adopt a shipped-identical copy the record doesn't vouch for,
+                # so the next content change upgrades it instead of calling it
+                # foreign.
+                expected = _expected(spec, platform)
+                recorded = _load_state(home).get(str(target), {}).get("files")
+                if recorded != expected and _matches(target, expected):
+                    _record_install(target, expected, home)
             elif state == FOREIGN and not force:
                 action = KEPT
             else:

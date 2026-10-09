@@ -254,6 +254,50 @@ def test_state_ours_older(configured):
     assert skills.detect(cli("codex"), "safe-git-push", home=h) == skills.OURS_OLDER
 
 
+def test_changed_vendored_content_at_the_same_version_is_upgraded(configured, monkeypatch):
+    """A vendored skill edited between releases (no version bump) must not
+    read as current just because the recorded version still matches."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    script = "scripts/safe_push.py"
+    monkeypatch.setattr(
+        skills, "_expected", lambda spec, platform: {"SKILL.md": "new", script: "new"}
+    )
+
+    assert skills.detect(cli("codex"), "safe-git-push", home=h) == skills.OURS_OLDER
+
+
+def test_a_newer_aicp_install_is_not_downgraded(configured):
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    target = h / ".codex/skills/commit/SKILL.md"
+    target.write_text("written by a future aicp\n", encoding="utf-8")
+    records = skills._load_state(h)
+    records[str(target)] = {"version": "999.0.0", "files": {".": skills._sha(target.read_bytes())}}
+    skills._save_state(records, h)
+
+    assert skills.detect(cli("codex"), "commit", home=h) == skills.CURRENT
+
+
+def test_a_hand_synced_copy_matching_the_shipped_one_is_adopted(configured):
+    """Edited by hand, then synced back to exactly what aicp ships: current,
+    and re-recorded so the next content change upgrades it."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    target = h / ".codex/skills/commit/SKILL.md"
+    shipped = target.read_bytes()
+    target.write_text("hand edit\n", encoding="utf-8")
+    skills.install([cli("codex")], home=h)  # foreign: kept, record untouched
+    target.write_bytes(shipped)
+    records = skills._load_state(h)
+    records[str(target)]["files"] = {".": skills._sha(b"hand edit\n")}
+    skills._save_state(records, h)
+
+    assert skills.detect(cli("codex"), "commit", home=h) == skills.CURRENT
+    skills.install([cli("codex")], home=h)
+    assert skills._load_state(h)[str(target)]["files"] == {".": skills._sha(shipped)}
+
+
 def test_state_foreign_when_nothing_was_recorded(configured):
     """No record and content we'd never write → the user's own file."""
     h = configured("codex")
@@ -422,8 +466,10 @@ def test_an_absolute_path_record_key_cannot_escape_the_target(configured, tmp_pa
     skills._save_state(records, h)
 
     # A "match" here would mean the traversal succeeded and the attacker's
-    # planted hash was compared against the outside file's real content.
-    assert skills.detect(cli("codex"), "commit", home=h) == skills.FOREIGN
+    # planted hash was compared against the outside file's real content
+    # (ours_older: same version, bytes unlike the shipped ones). Rejected, the
+    # record is ignored and the untouched install reads current by content.
+    assert skills.detect(cli("codex"), "commit", home=h) == skills.CURRENT
 
 
 def test_a_dotdot_record_key_cannot_escape_the_target(configured, tmp_path):
@@ -448,7 +494,7 @@ def test_a_dotdot_record_key_cannot_escape_the_target(configured, tmp_path):
     records[str(target)]["files"] = {rel: skills._sha(secret.read_bytes())}
     skills._save_state(records, h)
 
-    assert skills.detect(cli("codex"), "safe-git-push", home=h) == skills.FOREIGN
+    assert skills.detect(cli("codex"), "safe-git-push", home=h) == skills.CURRENT
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFOs are POSIX-only")
@@ -481,7 +527,7 @@ def test_a_traversal_key_does_not_hang_on_a_fifo(configured):
         with open(fifo, "wb"):  # unstick the hung open() so the thread can exit
             pass
         pytest.fail("detect() hung reading a FIFO reached via a traversal record key")
-    assert result["state"] == skills.FOREIGN
+    assert result["state"] == skills.CURRENT
 
 
 @pytest.mark.parametrize(

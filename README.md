@@ -103,9 +103,28 @@ aicp --config   # -> Skills
 `/safe-git-push` only means something if a skill by that exact name exists in
 the CLI's own config directory — otherwise the CLI receives a slash command it
 has never heard of and improvises. aicp ships and installs that skill for you,
-but it never overwrites a skill you already have: a file with no aicp version
-marker next to it is treated as yours and left alone. `/commit` is always left
-to your existing definition.
+but it never overwrites a skill you already have.
+
+The Skills row lists every skill per CLI, then asks two questions, both
+defaulting to no:
+
+1. **Install/upgrade?** — writes anything *not installed yet* and upgrades
+   anything *from an older aicp*.
+2. **Replace your own copies?** — only asked when a file isn't aicp's; yours
+   is moved to `<name>.bak` first.
+
+How aicp tells them apart: every install records a SHA-256 per file in one
+`~/.aicp/state.json` (nothing is written beside the skill itself).
+
+| What's on disk | Shown as | Install/upgrade does |
+| --- | --- | --- |
+| Nothing | not installed yet | installs |
+| Byte-identical to what this aicp ships | installed | nothing (re-records it if the record was lost or stale) |
+| What an older aicp wrote, untouched — or what this version wrote before the vendored skill changed | from an older aicp | upgrades |
+| Anything else, including aicp's copy edited by hand | your own file | keeps it |
+
+A hand edit you later sync back to exactly the shipped bytes counts as
+aicp's again, so later releases upgrade it.
 
 Targets follow each CLI's own config directory, not its binary name — `agy`
 (this project's name for the Gemini CLI) reads `~/.gemini`, not `~/.agy`:
