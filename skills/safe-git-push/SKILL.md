@@ -1,6 +1,6 @@
 ---
 name: safe-git-push
-description: Safely synchronize and push the current git branch. Always fetches before pushing, never uses `git pull`, never creates an accidental self-merge like "Merge remote-tracking branch 'origin/develop' into develop", preserves intentional cross-branch merge topology instead of flattening it with a blind rebase, and never force-pushes or rewrites shared history. Use this whenever a `git push` is needed, especially on a shared branch (develop/main) or after the remote may have moved.
+description: Safely push the current git branch — fetch first, then integrate without `git pull`, self-merges, flattened merges, or force-push. Use whenever a `git push` is needed, especially on shared branches (develop/main).
 ---
 
 # Safe Git Push
@@ -19,8 +19,10 @@ python3 scripts/safe_push.py --remote origin
 ```
 
 Exit code `0` = pushed, fast-forwarded, or already in sync (message says
-which). Exit code `1` = stopped without touching anything — read the
-`Safe push aborted: <reason>` line on stderr and handle it by hand.
+which). A successful push is confirmed by git's own per-ref server report
+(exit 0), so there's no extra `ls-remote` round trip. Exit code `1` = stopped
+without touching anything — read the `Safe push aborted: <reason>` line on
+stderr and handle it by hand.
 
 ## Decision summary
 
@@ -33,7 +35,8 @@ which). Exit code `1` = stopped without touching anything — read the
 | Diverged, local history has a likely self-merge not yet pushed | **Stops** — won't guess whether to keep or drop it |
 | Diverged, otherwise | Backs up HEAD to a throwaway ref, `git rebase --rebase-merges=no-rebase-cousins <remote>` (preserves real cross-branch merges instead of flattening them), verifies the merge count and ancestry didn't change, then pushes |
 | Rebase conflicts | Aborts the rebase, restores the branch, reports the conflicting files, stops |
-| Push rejected (someone else pushed in between) | Re-fetches and re-analyzes, up to 2 retries, never force-pushes |
+| Push rejected because the remote moved (non-fast-forward / fetch first) | Re-fetches and re-analyzes, up to 2 retries, never force-pushes |
+| Push rejected for any other reason (e.g. a server hook declined it) | Stops with the remote's message — retrying wouldn't help |
 | Remote says protected branch / permission denied | Stops, tells you to use the normal PR/MR flow |
 
 Never done, under any circumstance: `git pull`, a plain `git merge <remote-ref>`,

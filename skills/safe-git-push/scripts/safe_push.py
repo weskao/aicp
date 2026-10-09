@@ -9,23 +9,33 @@ Never uses: git pull, git merge <remote-ref> (plain), git push --force*/--all/
 ref, git stash/clean/commit, or a branch/checkout switch.
 """
 import argparse
+import os
 import re
 import subprocess
 import sys
 import time
 
 MAX_PUSH_RETRIES = 2
+PROTECTED_MARKERS = ("protected branch", "permission denied", "not allowed to push")
+# The remote moved after our fetch; any other rejection (hook decline, etc.) won't fix itself.
+RACE_MARKERS = ("non-fast-forward", "fetch first", "cannot lock ref")
+IN_PROGRESS = {"rebase-merge": "rebase (merge)", "rebase-apply": "rebase (apply)", "MERGE_HEAD": "merge",
+               "CHERRY_PICK_HEAD": "cherry-pick", "REVERT_HEAD": "revert", "BISECT_LOG": "bisect"}
 
 
-def run(cmd, check=True):
-    p = subprocess.run(cmd, capture_output=True, text=True)
+class Retry(Exception):
+    pass
+
+
+def git(*args, check=True):
+    p = subprocess.run(["git", *args], capture_output=True, text=True)
     if check and p.returncode != 0:
-        raise RuntimeError(f"$ {' '.join(cmd)}\n{p.stderr.strip()}")
+        raise RuntimeError(f"$ git {' '.join(args)}\n{p.stderr.strip()}")
     return p
 
 
-def run_ok(cmd):
-    return subprocess.run(cmd, capture_output=True, text=True).returncode == 0
+def out(*args):
+    return git(*args).stdout.strip()
 
 
 def stop(msg):
@@ -34,53 +44,38 @@ def stop(msg):
     sys.exit(1)
 
 
-def git_dir():
-    return run(["git", "rev-parse", "--git-dir"]).stdout.strip()
-
-
 def check_preconditions():
-    if not run_ok(["git", "rev-parse", "--is-inside-work-tree"]):
+    p = git("rev-parse", "--is-inside-work-tree", "--absolute-git-dir", "--is-shallow-repository", check=False)
+    info = p.stdout.split("\n")
+    if p.returncode != 0 or info[0] != "true":
         stop("not inside a git work tree.")
+    gd, shallow = info[1], info[2]
 
-    gd = git_dir()
-    import os
-    in_progress = [
-        name for name, path in {
-            "rebase (merge)": f"{gd}/rebase-merge",
-            "rebase (apply)": f"{gd}/rebase-apply",
-            "merge": f"{gd}/MERGE_HEAD",
-            "cherry-pick": f"{gd}/CHERRY_PICK_HEAD",
-            "revert": f"{gd}/REVERT_HEAD",
-            "bisect": f"{gd}/BISECT_LOG",
-        }.items() if os.path.exists(path)
-    ]
-    if in_progress:
-        stop(f"a {in_progress[0]} is already in progress. Resolve or abort it first.")
+    busy = [label for name, label in IN_PROGRESS.items() if os.path.exists(os.path.join(gd, name))]
+    if busy:
+        stop(f"a {busy[0]} is already in progress. Resolve or abort it first.")
 
-    branch_p = subprocess.run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
-                               capture_output=True, text=True)
-    if branch_p.returncode != 0:
+    p = git("symbolic-ref", "--quiet", "--short", "HEAD", check=False)
+    if p.returncode != 0:
         stop("HEAD is detached; cannot safely guess which branch to push.")
-    branch = branch_p.stdout.strip()
+    branch = p.stdout.strip()
 
-    dirty = run(["git", "status", "--porcelain"]).stdout.strip()
-    if dirty:
+    # -uno: skip the untracked-file scan (slow on big trees); untracked files can't be pushed anyway.
+    if out("status", "--porcelain", "--untracked-files=no"):
         print("Note: working tree has uncommitted changes; they are never included "
               "in a push and are left untouched.", file=sys.stderr)
-
-    if run(["git", "rev-parse", "--is-shallow-repository"]).stdout.strip() == "true":
+    if shallow == "true":
         print("Note: shallow repository; ancestry checks below may be incomplete.", file=sys.stderr)
-
-    return branch
+    return branch, gd
 
 
 def resolve_remote(branch, remote_override):
     if remote_override:
         return remote_override
-    remote = run(["git", "config", "--get", f"branch.{branch}.remote"], check=False).stdout.strip()
+    remote = git("config", "--get", f"branch.{branch}.remote", check=False).stdout.strip()
     if remote:
         return remote
-    remotes = [r for r in run(["git", "remote"]).stdout.splitlines() if r.strip()]
+    remotes = out("remote").split()
     if len(remotes) == 1:
         return remotes[0]
     if not remotes:
@@ -90,10 +85,7 @@ def resolve_remote(branch, remote_override):
 
 
 def fetch_branch(remote, branch):
-    p = subprocess.run(
-        ["git", "fetch", remote, f"refs/heads/{branch}:refs/remotes/{remote}/{branch}"],
-        capture_output=True, text=True,
-    )
+    p = git("fetch", remote, f"refs/heads/{branch}:refs/remotes/{remote}/{branch}", check=False)
     if p.returncode == 0:
         return True  # remote branch exists and was fetched
     if "couldn't find remote ref" in p.stderr or "not found" in p.stderr.lower():
@@ -101,123 +93,72 @@ def fetch_branch(remote, branch):
     stop(f"fetch from '{remote}' failed:\n{p.stderr.strip()}")
 
 
-def is_ancestor(maybe_ancestor, ref):
-    return run_ok(["git", "merge-base", "--is-ancestor", maybe_ancestor, ref])
-
-
-SELF_MERGE_RE = re.compile(
-    r"^Merge (remote-tracking )?branch '([^']*/)?{branch}'(\s+of\s+\S+)?\s+into\s+{branch}$"
-)
-
-
-def find_suspicious_self_merge(remote_ref, branch):
-    log = run(["git", "log", "--merges", "--format=%H\t%s", f"{remote_ref}..HEAD"]).stdout
-    pat = re.compile(SELF_MERGE_RE.pattern.format(branch=re.escape(branch)))
-    for line in log.splitlines():
-        sha, _, subject = line.partition("\t")
-        if pat.match(subject.strip()):
-            return sha, subject.strip()
-    return None
-
-
 def push(remote, branch, set_upstream):
-    cmd = ["git", "-c", "push.followTags=false", "push"]
-    if set_upstream:
-        cmd.append("--set-upstream")
-    cmd += [remote, f"HEAD:refs/heads/{branch}"]
-    return subprocess.run(cmd, capture_output=True, text=True)
+    # Exit 0 means the server accepted HEAD for this exact ref (report-status), so no
+    # follow-up ls-remote round trip is needed to verify it.
+    p = git("-c", "push.followTags=false", "push", *(["--set-upstream"] if set_upstream else []),
+            remote, f"HEAD:refs/heads/{branch}", check=False)
+    if p.returncode == 0:
+        return out("rev-parse", "HEAD")
+    low = p.stderr.lower()
+    if any(m in low for m in PROTECTED_MARKERS):
+        stop(f"remote rejected the push (protected branch):\n{p.stderr.strip()}\n"
+             "Use the repository's normal PR/MR workflow instead.")
+    if any(m in low for m in RACE_MARKERS):
+        raise Retry(p.stderr.strip())
+    stop(f"push failed:\n{p.stderr.strip()}")
 
 
-def verify_pushed(remote, branch):
-    local_sha = run(["git", "rev-parse", "HEAD"]).stdout.strip()
-    remote_sha = run(["git", "ls-remote", remote, f"refs/heads/{branch}"]).stdout.split()[0]
-    if local_sha != remote_sha:
-        stop(f"push verification failed: remote is {remote_sha[:10]}, local HEAD is {local_sha[:10]}.")
-    return local_sha
-
-
-def attempt(branch, remote, has_upstream):
-    remote_exists = fetch_branch(remote, branch)
-
-    if not remote_exists:
-        p = push(remote, branch, set_upstream=True)
-        if p.returncode != 0:
-            handle_push_failure(p.stderr)
-        sha = verify_pushed(remote, branch)
-        print(f"Safe push completed (first push).\nBranch: {branch}\nRemote: {remote}/{branch}\n"
-              f"Remote HEAD: {sha}")
+def attempt(branch, remote, has_upstream, gd):
+    remote_ref = f"{remote}/{branch}"
+    if not fetch_branch(remote, branch):
+        sha = push(remote, branch, set_upstream=True)
+        print(f"Safe push completed (first push).\nBranch: {branch}\nRemote: {remote_ref}\nRemote HEAD: {sha}")
         return
 
-    remote_ref = f"{remote}/{branch}"
-    local_sha = run(["git", "rev-parse", "HEAD"]).stdout.strip()
-    remote_sha = run(["git", "rev-parse", remote_ref]).stdout.strip()
-
-    if local_sha == remote_sha:
+    # One walk replaces two is-ancestor checks: "<only on remote>\t<only local>".
+    behind, ahead = map(int, out("rev-list", "--left-right", "--count", f"{remote_ref}...HEAD").split())
+    if not behind and not ahead:
         print(f"Already synchronized with {remote_ref}. Nothing to push.")
         return
-
-    if is_ancestor(remote_ref, "HEAD"):
-        pass  # local ahead -> fall through to push directly
-    elif is_ancestor("HEAD", remote_ref):
-        run(["git", "merge", "--ff-only", remote_ref])
+    if not ahead:
+        git("merge", "--ff-only", remote_ref)
         print(f"Fast-forwarded to {remote_ref}. Nothing to push.")
         return
-    else:
-        integrate_diverged(remote_ref, branch)
+    if behind:
+        integrate_diverged(remote_ref, branch, gd)
 
-    p = push(remote, branch, set_upstream=not has_upstream)
-    if p.returncode != 0:
-        handle_push_failure(p.stderr)
-    sha = verify_pushed(remote, branch)
+    sha = push(remote, branch, set_upstream=not has_upstream)
     print(f"Safe push completed.\nBranch: {branch}\nRemote: {remote_ref}\nRemote HEAD: {sha}")
 
 
-def integrate_diverged(remote_ref, branch):
-    suspicious = find_suspicious_self_merge(remote_ref, branch)
-    if suspicious:
-        sha, subject = suspicious
-        stop(f"local history contains a likely self-merge ({sha[:10]} \"{subject}\") "
-             f"not yet pushed. Not touching it automatically — review it by hand.")
+def integrate_diverged(remote_ref, branch, gd):
+    b = re.escape(branch)
+    self_merge = re.compile(rf"^Merge (remote-tracking )?branch '([^']*/)?{b}'(\s+of\s+\S+)?\s+into\s+{b}$")
+    merges = out("log", "--merges", "--format=%H\t%s", f"{remote_ref}..HEAD").splitlines()
+    for line in merges:
+        sha, _, subject = line.partition("\t")
+        if self_merge.match(subject.strip()):
+            stop(f"local history contains a likely self-merge ({sha[:10]} \"{subject.strip()}\") "
+                 f"not yet pushed. Not touching it automatically — review it by hand.")
 
-    old_head = run(["git", "rev-parse", "HEAD"]).stdout.strip()
     backup_ref = f"refs/backup/safe-push/{branch}-{int(time.time())}"
-    run(["git", "update-ref", backup_ref, old_head])
+    git("update-ref", backup_ref, "HEAD")
 
-    old_merge_count = len(run(["git", "log", "--merges", "--format=%H", f"{remote_ref}..HEAD"]).stdout.splitlines())
-
-    p = subprocess.run(["git", "rebase", "--rebase-merges=no-rebase-cousins", remote_ref],
-                        capture_output=True, text=True)
-    if p.returncode != 0:
-        conflicts = run(["git", "diff", "--name-only", "--diff-filter=U"], check=False).stdout.strip()
-        run(["git", "rebase", "--abort"], check=False)
+    if git("rebase", "--rebase-merges=no-rebase-cousins", remote_ref, check=False).returncode != 0:
+        conflicts = git("diff", "--name-only", "--diff-filter=U", check=False).stdout.strip()
+        git("rebase", "--abort", check=False)
         stop("rebase hit conflicts and was aborted; branch restored to its pre-rebase state.\n"
              f"Conflicting files:\n{conflicts}\nResolve manually, then rerun.")
 
-    ok = is_ancestor(remote_ref, "HEAD") and not run_ok(["test", "-d", f"{git_dir()}/rebase-merge"])
-    new_merge_count = len(run(["git", "log", "--merges", "--format=%H", f"{remote_ref}..HEAD"]).stdout.splitlines())
-    if not ok or new_merge_count != old_merge_count:
-        run(["git", "reset", "--hard", backup_ref])
+    ok = (not os.path.isdir(os.path.join(gd, "rebase-merge"))
+          and git("merge-base", "--is-ancestor", remote_ref, "HEAD", check=False).returncode == 0
+          and int(out("rev-list", "--merges", "--count", f"{remote_ref}..HEAD")) == len(merges))
+    if not ok:
+        git("reset", "--hard", backup_ref)
         stop("post-rebase verification failed (remote not an ancestor, or merge topology changed); "
              f"restored from backup ref {backup_ref}.")
-
-    run(["git", "update-ref", "-d", backup_ref])
-
-
-PROTECTED_MARKERS = ("protected branch", "permission denied", "not allowed to push")
-
-
-def handle_push_failure(stderr):
-    low = stderr.lower()
-    if any(m in low for m in PROTECTED_MARKERS):
-        stop(f"remote rejected the push (protected branch):\n{stderr.strip()}\n"
-             "Use the repository's normal PR/MR workflow instead.")
-    if "non-fast-forward" in low or "fetch first" in low or "rejected" in low:
-        raise Retry(stderr)
-    stop(f"push failed:\n{stderr.strip()}")
-
-
-class Retry(Exception):
-    pass
+    git("update-ref", "-d", backup_ref)
 
 
 def main():
@@ -225,13 +166,13 @@ def main():
     ap.add_argument("--remote", help="Override the remote to use (needed when ambiguous).")
     args = ap.parse_args()
 
-    branch = check_preconditions()
-    has_upstream = bool(run(["git", "config", "--get", f"branch.{branch}.merge"], check=False).stdout.strip())
+    branch, gd = check_preconditions()
+    has_upstream = bool(git("config", "--get", f"branch.{branch}.merge", check=False).stdout.strip())
     remote = resolve_remote(branch, args.remote)
 
     for attempt_no in range(MAX_PUSH_RETRIES + 1):
         try:
-            attempt(branch, remote, has_upstream)
+            attempt(branch, remote, has_upstream, gd)
             return
         except Retry as e:
             if attempt_no == MAX_PUSH_RETRIES:
