@@ -84,6 +84,18 @@ def _literal(node: ast.expr | None, consts: dict[str, str] | None = None) -> str
     return None
 
 
+def _lookup_tuples(tree: ast.AST) -> set[int]:
+    """``id()`` of tuples that are looked through, not tables: ``for k in ("a_b", ...)``
+    and ``x in ("a_b", ...)`` hold field names, never msgids."""
+    skip: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.For):
+            skip.add(id(node.iter))
+        elif isinstance(node, ast.Compare):
+            skip.update(id(c) for c in node.comparators)
+    return skip
+
+
 def _collect() -> tuple[dict[str, set[str]], dict[str, str]]:
     """``{msgid: {english default, ...}}`` and ``{msgid: "file:line"}``.
 
@@ -104,6 +116,7 @@ def _collect() -> tuple[dict[str, set[str]], dict[str, str]]:
     for path in sorted(SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
         consts = _module_constants(tree)
+        lookups = _lookup_tuples(tree)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 func = node.func
@@ -118,6 +131,8 @@ def _collect() -> tuple[dict[str, set[str]], dict[str, str]]:
                         note(msgid, english, path, node.lineno)
                 continue
             if isinstance(node, ast.Tuple):
+                if id(node) in lookups:
+                    continue
                 elements = node.elts
             elif isinstance(node, ast.Dict) and not all(
                 _literal(key) is not None for key in node.keys if key is not None
@@ -148,6 +163,23 @@ def test_the_collector_sees_the_call_sites_it_claims_to():
     assert "result_title" in MSGIDS
     assert "skills_keep_note" in MSGIDS
     assert "config_help_doctor" in MSGIDS
+
+
+def test_the_collector_ignores_field_name_tuples_in_loops_and_membership_checks():
+    """Regression: ``for key in ("config_dir", "config_dir_windows")`` and
+    ``field in ("config_dir_env", ...)`` were collected as msgids and failed CI."""
+    tree = ast.parse(
+        'for key in ("config_dir", "config_dir_windows"): pass\n'
+        'ok = field in ("config_dir_env", "config_dir_windows")\n'
+        'ROWS = ("result_title", "Result")\n'
+    )
+    skipped = _lookup_tuples(tree)
+    kept = [
+        n.elts[0].value
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Tuple) and id(n) not in skipped
+    ]
+    assert kept == ["result_title"]
 
 
 def test_every_msgid_used_in_src_has_a_zh_tw_translation():

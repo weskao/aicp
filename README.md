@@ -7,8 +7,8 @@ a fallback chain until one exits 0; anything not installed is skipped. It
 sends that CLI two literal prompts, `/commit` then `/safe-git-push`.
 
 **The chain is yours to arrange, and it isn't a fixed set.** The built-in
-registry ships seven CLIs — `copilot`, `agy`, `codex`, `claude`, `vibe`,
-`grok`, `opencode` — but that's only the default *order*, not a hardcoded pipeline. Move
+registry ships eight CLIs — `copilot`, `agy`, `codex`, `claude`, `vibe`,
+`grok`, `opencode`, `devin` — but that's only the default *order*, not a hardcoded pipeline. Move
 any one of them to the front with `aicp --swap-ai`, set the whole order from
 `aicp --config` or `AICP_CLI_ORDER`, and add your own CLIs (or drop built-in
 ones) with `aicp --agents`. Every agent in the resolved registry is a
@@ -138,6 +138,7 @@ Targets follow each CLI's own config directory, not its binary name — `agy`
 | `vibe` | `~/.vibe` | Yes | Yes |
 | `grok` | `$GROK_HOME` when set, otherwise `~/.grok` | Yes | Yes |
 | `opencode` | `$OPENCODE_CONFIG_DIR` when set, otherwise `~/.config/opencode` | Yes | Yes |
+| `devin` | `~/.config/devin` (Windows: `%APPDATA%\devin`) | Yes | Yes |
 
 Every configured CLI gets `/safe-git-push`. `/commit` is installed everywhere
 *except* `claude`, which already resolves `/commit` from
@@ -207,7 +208,7 @@ aicp --config    # Agents row: ←/→ moves one CLI, t sends it to #1
 
 ```sh
 # ~/.aicp/config.json — or AICP_CLI_ORDER="claude codex" aicp for one run
-{ "aicp_cli_order": "claude codex copilot agy vibe grok opencode" }
+{ "aicp_cli_order": "claude codex copilot agy vibe grok opencode devin" }
 ```
 
 `--swap-ai` is a rotation, not a destructive set: the CLI you pick moves to
@@ -322,6 +323,7 @@ integration tests and installed-wheel checks on all three operating systems.
 | `executable` | Binary name resolved on `PATH`, or an absolute executable path. Separate from the stable agent ID used in fallback order and history. |
 | `config_dir` | Absolute path or `~/`-relative directory; home is resolved when used. |
 | `config_dir_env` | Optional environment variable overriding that directory (currently `GROK_HOME` and `OPENCODE_CONFIG_DIR`). |
+| `config_dir_windows` | Optional `config_dir` used on Windows instead (devin: `~/AppData/Roaming/devin`, i.e. `%APPDATA%\\devin`). Overriding `config_dir` alone clears it. |
 | `skills_dir` | Relative directory inside `config_dir` where skills are installed. |
 | `skills` | Which vendored skills to install for this agent — any of `safe-git-push`, `commit`. Omitting `commit` is how `claude` keeps its own `commands/commit.md`. |
 | `memory_file` | Instruction filename used when adapting vendored skill text. Project directory references use the basename of `config_dir`. |
@@ -332,7 +334,8 @@ agent IDs. Future supported settings can be added to each entry and the
 loader; adding a JSON field alone does not implement new behavior.
 Invocation defaults preserve agy's `--new-project` (use the current working
 directory), vibe's `--trust` (avoid an interactive trust prompt), opencode's
-`--auto` (auto-approve permissions not explicitly denied), and the existing MCP startup suppression flags.
+`--auto` (auto-approve permissions not explicitly denied), devin's `--permission-mode dangerous`
+and `--respect-workspace-trust false` (print mode can neither ask for approval nor show the trust prompt), and the existing MCP startup suppression flags.
 
 This is packaged application data, not a per-user override file. Package
 upgrades replace it; neither repository-local files nor
@@ -429,7 +432,7 @@ the order yourself:
 
 ```sh
 # ~/.aicp/config.json
-{ "aicp_cli_order": "minimax copilot agy codex claude vibe grok opencode" }
+{ "aicp_cli_order": "minimax copilot agy codex claude vibe grok opencode devin" }
 ```
 
 Or as an environment variable, for one run:
@@ -483,7 +486,7 @@ in this file to filter: `aicp` stores none.
 | `AICP_DO_PUSH` | `1` | Run the `/safe-git-push` step. `0` = commit and stop. |
 | `AICP_LANG` | `en` | Message language: `en` or `zh-TW`, everywhere including notifications. |
 | `AICP_LOGO` | `animated` | The `aicp --config` banner: `color`, `mono`, `animated` or `off`. Anything else falls back to `animated`. |
-| `AICP_CLI_ORDER` | registry order (`copilot agy codex claude vibe grok opencode` out of the box) | Fallback order, space-separated. A prefix is enough — any agent left out is appended after it, in registry order, so adding an agent never invalidates an order you already saved. An unknown or repeated name is refused outright and the default order is used. |
+| `AICP_CLI_ORDER` | registry order (`copilot agy codex claude vibe grok opencode devin` out of the box) | Fallback order, space-separated. A prefix is enough — any agent left out is appended after it, in registry order, so adding an agent never invalidates an order you already saved. An unknown or repeated name is refused outright and the default order is used. |
 | `AICP_TZ` | `Asia/Taipei` | IANA zone name used to render commit timestamps. Anything else falls back to the default. |
 | `AICP_TZ_LABEL` | `UTC+8` | Cosmetic label shown beside those timestamps; not validated. |
 | `AICP_STEP_TIMEOUT` | *(unset)* | Pins every CLI's per-step budget in seconds, skipping the formula and history below entirely. |

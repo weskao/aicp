@@ -11,8 +11,8 @@ failure-avoidance patterns.
 
 ## Harness support
 
-- [ ] Support "devin" harness — detect the Devin AI agent environment
-  (`~/.devin`). Add a `devin` harness so `aicp` can install skills, rules,
+- [x] Support "devin" harness — detect the Devin AI agent environment
+  (`~/.config/devin`; Windows `%APPDATA%\devin`). Add a `devin` harness so `aicp` can install skills, rules,
   and config into the paths and formats that Devin expects.
 - [x] Support "opencode" harness — detect the OpenCode agent environment
   (`~/.config/opencode`). Add an `opencode` harness so `aicp` can install skills,

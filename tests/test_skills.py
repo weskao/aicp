@@ -118,7 +118,7 @@ def test_claude_gets_safe_git_push_but_no_commit(configured):
     assert not (h / ".claude/skills/commit").exists()
 
 
-@pytest.mark.parametrize("name", ["codex", "copilot", "agy", "vibe", "grok", "opencode"])
+@pytest.mark.parametrize("name", ["codex", "copilot", "agy", "vibe", "grok", "opencode", "devin"])
 def test_non_claude_clis_get_both_skills(configured, name):
     h = configured(name)
     root = skills.config_root(cli(name), home=h)

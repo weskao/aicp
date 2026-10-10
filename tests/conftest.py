@@ -263,7 +263,7 @@ def only_git_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 #: a plain tuple here (not imported from aicp.contracts) so this harness has
 #: no import-order dependency on the package under test — but see
 #: test_cross_platform.py's roster-parity test, which pins the two in sync.
-ALL_CLIS: tuple[str, ...] = ("copilot", "agy", "codex", "claude", "vibe", "grok", "opencode")
+ALL_CLIS: tuple[str, ...] = ("copilot", "agy", "codex", "claude", "vibe", "grok", "opencode", "devin")
 
 _SH_STUB = """#!/bin/sh
 {{
