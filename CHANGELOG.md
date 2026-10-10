@@ -1,3 +1,29 @@
+## [0.21.0] - 2026-10-10
+
+### 🚀 Features
+
+- **agents:** Support Windows config paths
+- Add Devin CLI support
+
+### 🐛 Bug Fixes
+
+- Honor live config directory environment
+
+### 💼 Other
+
+- Derive version from __version__
+
+### 📚 Documentation
+
+- Clarify cross-platform guidance
+
+### 🧪 Testing
+
+- **agents:** Cover Windows config paths
+
+### ⚙️ Miscellaneous Tasks
+
+- Ignore local agent memory
 ## [0.20.6] - 2026-10-09
 
 ### ⚡ Performance
