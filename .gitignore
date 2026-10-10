@@ -12,3 +12,4 @@ build/
 .omc/
 
 .codegraph/
+.claude/agent-memory-local/
