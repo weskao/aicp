@@ -664,14 +664,14 @@ def _agent_form(
 ) -> tuple[dict[str, str] | None, int]:
     """One typed line per field. With *current*, ⏎ keeps a value and only the
     fields that changed come back; without it every field but
-    ``config_dir_env`` is required and is asked again until answered — as is
+    ``config_dir_env``/``config_dir_windows`` is required and is asked again until answered — as is
     a ``name`` that is malformed or already in *taken*.
     Returns ``(answers, rows printed)``; answers is None when EOF or Ctrl+C
     cut the form off, so nothing half-typed is ever applied."""
     answers: dict[str, str] = {}
     printed = 0
     for field in fields:
-        optional = current is not None or field == "config_dir_env"
+        optional = current is not None or field in ("config_dir_env", "config_dir_windows")
         while True:
             if current is not None:
                 hint = f" {DIM}[{current.get(field, '')}]{RESET}"

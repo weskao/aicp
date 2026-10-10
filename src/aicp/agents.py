@@ -15,7 +15,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 
 @dataclass(frozen=True)
@@ -27,13 +27,17 @@ class Agent:
     skills: tuple[str, ...]
     args: tuple[str, ...]
     config_dir_env: str = ""
+    #: Used instead of ``config_dir`` on Windows when set (devin: %APPDATA%).
+    config_dir_windows: str = ""
 
     def config_root(self, home: Path | None = None) -> Path:
         if home is None and (override := os.environ.get(self.config_dir_env)):
             return Path(override).expanduser()
-        if self.config_dir.startswith("~/"):
-            return (Path.home() if home is None else home) / self.config_dir[2:]
-        return Path(self.config_dir)
+        config_dir = self.config_dir_windows if sys.platform == "win32" and self.config_dir_windows else self.config_dir
+        if config_dir.startswith("~/"):
+            # shortcut: assumes %APPDATA% is the default ~/AppData/Roaming; read the env var if roaming-profile users report a miss
+            return (Path.home() if home is None else home) / config_dir[2:]
+        return Path(config_dir)
 
 
 def _read_registry(path: Path) -> dict[str, dict]:
@@ -62,6 +66,8 @@ def _build_agent(path: Path, name: str, entry: dict, base: Agent | None) -> Agen
         "skills": list(base.skills) if base else None,
         "args": list(base.args) if base else None,
         "config_dir_env": base.config_dir_env if base else "",
+        # An overridden config_dir must win on Windows too, not the built-in Windows path.
+        "config_dir_windows": base.config_dir_windows if base and "config_dir" not in entry else "",
     }
     merged.update({k: v for k, v in entry.items() if k != "disabled"})
     for key in ["executable", "config_dir", "memory_file", "skills_dir"]:
@@ -76,8 +82,13 @@ def _build_agent(path: Path, name: str, entry: dict, base: Agent | None) -> Agen
             raise ValueError(f"{path}: {name}: invalid {key}")
     if merged["args"].count("{prompt}") != 1:
         raise ValueError(f"{path}: {name}: args must contain one {{prompt}} argument")
-    if not merged["config_dir"].startswith("~/") and not Path(merged["config_dir"]).is_absolute():
-        raise ValueError(f"{path}: {name}: config_dir must be absolute or start with ~/")
+    for key in ("config_dir", "config_dir_windows"):
+        value = merged.get(key)
+        if key == "config_dir_windows" and value == "":
+            continue
+        absolute = PureWindowsPath if key == "config_dir_windows" else Path
+        if not isinstance(value, str) or "\0" in value or (not value.startswith("~/") and not absolute(value).is_absolute()):
+            raise ValueError(f"{path}: {name}: {key} must be absolute or start with ~/")
     skills_dir = Path(merged["skills_dir"])
     if skills_dir.anchor or ".." in skills_dir.parts or skills_dir == Path("."):
         raise ValueError(f"{path}: {name}: skills_dir must stay inside config_dir")
@@ -92,6 +103,7 @@ def _build_agent(path: Path, name: str, entry: dict, base: Agent | None) -> Agen
         skills=tuple(merged["skills"]),
         args=tuple(merged["args"]),
         config_dir_env=env,
+        config_dir_windows=merged["config_dir_windows"],
     )
 
 
