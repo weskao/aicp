@@ -62,13 +62,11 @@ jobs:
               suffix = ".exe" if os.name == "nt" else ""
               subprocess.run([scripts / f"aicp{suffix}", "--help"], check=True)
 
-              # The distribution name (aicp-cli) and the import name (aicp)
-              # differ, so __init__'s importlib.metadata lookup can miss and
-              # fall back to "0+unknown" without failing anything. Compare the
-              # installed wheel's own report against pyproject.toml.
+              # The installed wheel must report the source __version__ (hatch
+              # reads it into the wheel metadata). Compare the two.
               expected, = re.findall(
-                  r'^version = "(.+)"$',
-                  pathlib.Path("pyproject.toml").read_text(encoding="utf-8"),
+                  r'^__version__ = "(.+)"$',
+                  pathlib.Path("src/aicp/__init__.py").read_text(encoding="utf-8"),
                   re.MULTILINE,
               )
               reported = subprocess.run(
