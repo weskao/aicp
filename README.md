@@ -137,8 +137,8 @@ Targets follow each CLI's own config directory, not its binary name — `agy`
 | `agy` (Gemini CLI) | `~/.gemini` | Yes | Yes |
 | `vibe` | `~/.vibe` | Yes | Yes |
 | `grok` | `$GROK_HOME` when set, otherwise `~/.grok` | Yes | Yes |
-| `opencode` | `$OPENCODE_CONFIG_DIR` when set, otherwise `~/.config/opencode` | Yes | Yes |
-| `devin` | `~/.config/devin` (Windows: `%APPDATA%\devin`) | Yes | Yes |
+| `opencode` | `$OPENCODE_CONFIG_DIR` when set, otherwise `$XDG_CONFIG_HOME/opencode` when set, otherwise `~/.config/opencode` | Yes | Yes |
+| `devin` | `$XDG_CONFIG_HOME/devin` when set, otherwise `~/.config/devin` (Windows: `%APPDATA%\devin`) | Yes | Yes |
 
 Every configured CLI gets `/safe-git-push`. `/commit` is installed everywhere
 *except* `claude`, which already resolves `/commit` from
@@ -323,7 +323,7 @@ integration tests and installed-wheel checks on all three operating systems.
 | `executable` | Binary name resolved on `PATH`, or an absolute executable path. Separate from the stable agent ID used in fallback order and history. |
 | `config_dir` | Absolute path or `~/`-relative directory; home is resolved when used. |
 | `config_dir_env` | Optional environment variable overriding that directory (currently `GROK_HOME` and `OPENCODE_CONFIG_DIR`). |
-| `config_dir_windows` | Optional `config_dir` used on Windows instead (devin: `~/AppData/Roaming/devin`, i.e. `%APPDATA%\\devin`). Overriding `config_dir` alone clears it. |
+| `config_dir_windows` | Optional `config_dir` used on Windows instead (devin: `~/AppData/Roaming/devin`, i.e. `%APPDATA%\devin`). Overriding `config_dir` alone clears it. |
 | `skills_dir` | Relative directory inside `config_dir` where skills are installed. |
 | `skills` | Which vendored skills to install for this agent — any of `safe-git-push`, `commit`. Omitting `commit` is how `claude` keeps its own `commands/commit.md`. |
 | `memory_file` | Instruction filename used when adapting vendored skill text. Project directory references use the basename of `config_dir`. |

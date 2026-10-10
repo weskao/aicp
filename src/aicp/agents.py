@@ -17,6 +17,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
+#: Home-relative config prefixes that a live environment variable relocates.
+_LIVE_BASES = {"~/.config/": "XDG_CONFIG_HOME", "~/AppData/Roaming/": "APPDATA"}
+
 
 @dataclass(frozen=True)
 class Agent:
@@ -35,7 +38,10 @@ class Agent:
             return Path(override).expanduser()
         config_dir = self.config_dir_windows if sys.platform == "win32" and self.config_dir_windows else self.config_dir
         if config_dir.startswith("~/"):
-            # shortcut: assumes %APPDATA% is the default ~/AppData/Roaming; read the env var if roaming-profile users report a miss
+            for prefix, var in _LIVE_BASES.items():
+                # Live environment only (home=None); relative values are ignored, per the XDG spec.
+                if home is None and config_dir.startswith(prefix) and os.path.isabs(base := os.environ.get(var, "")):
+                    return Path(base) / config_dir[len(prefix) :]
             return (Path.home() if home is None else home) / config_dir[2:]
         return Path(config_dir)
 

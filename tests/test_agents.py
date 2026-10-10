@@ -248,6 +248,42 @@ def test_config_root_env_override_beats_config_dir_windows(tmp_path, monkeypatch
     assert agent.config_root() == tmp_path / "env"
 
 
+def test_config_root_xdg_config_home_only_for_live_environment(tmp_path, monkeypatch):
+    agent = _merged(tmp_path, {"devin": _WINDOWS_AGENT})["devin"]
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert agent.config_root() == tmp_path / "xdg" / "devin"
+    assert agent.config_root(tmp_path / "home") == tmp_path / "home" / ".config/devin"
+
+
+@pytest.mark.parametrize("value", ["", "relative/xdg"])
+def test_config_root_ignores_empty_or_relative_xdg_config_home(tmp_path, monkeypatch, value):
+    agent = _merged(tmp_path, {"devin": _WINDOWS_AGENT})["devin"]
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", value)
+    assert agent.config_root() == Path.home() / ".config/devin"
+
+
+def test_config_root_appdata_on_windows_only_for_live_environment(tmp_path, monkeypatch):
+    agent = _merged(tmp_path, {"devin": _WINDOWS_AGENT})["devin"]
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert agent.config_root() == tmp_path / "roaming" / "devin"
+    assert agent.config_root(tmp_path / "home") == tmp_path / "home" / "AppData/Roaming/devin"
+    monkeypatch.setenv("APPDATA", "relative")
+    assert agent.config_root() == Path.home() / "AppData/Roaming/devin"
+
+
+def test_config_root_env_override_beats_xdg_and_appdata(tmp_path, monkeypatch):
+    agent = _merged(tmp_path, {"devin": {**_WINDOWS_AGENT, "config_dir_env": "DEVIN_TEST_HOME"}})["devin"]
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("DEVIN_TEST_HOME", str(tmp_path / "env"))
+    assert agent.config_root() == tmp_path / "env"
+
+
 @pytest.mark.parametrize("value", ["C:\\Users\\me\\AppData\\Roaming\\devin", "C:/Users/me/devin", "~/AppData/Roaming/devin"])
 def test_config_dir_windows_accepts_windows_absolute_and_home_paths(tmp_path, value):
     agent = _merged(tmp_path, {"devin": {**_WINDOWS_AGENT, "config_dir_windows": value}})["devin"]

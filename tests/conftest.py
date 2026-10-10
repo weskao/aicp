@@ -92,6 +92,9 @@ def pinned_environment(tmp_path, monkeypatch):
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     monkeypatch.setenv("HOME", str(fake_home))
+    # Agent.config_root relocates ~/.config and ~/AppData/Roaming via these; a CI runner may set them.
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("APPDATA", raising=False)
     if sys.platform == "win32":
         monkeypatch.setenv("USERPROFILE", str(fake_home))
     monkeypatch.setenv("AICP_CONFIG", str(fake_home / "nonexistent.aicprc"))
