@@ -476,11 +476,24 @@ def test_a_adds_a_new_agent_in_full_at_the_end_of_the_chain(home):
     assert state.chain[-1] == "minimax"
 
 
+def test_a_leaves_config_dir_windows_optional_and_stores_it_when_typed(home):
+    minimax = {
+        "executable": "minimax",
+        "config_dir": "~/.minimax",
+        "memory_file": "AGENTS.md",
+        "skills_dir": "skills",
+        "skills": "safe-git-push",
+        "args": "--prompt,{prompt},--yes",
+    }
+    _agents_session(home, "a\nminimax\n" + _answers({**minimax, "config_dir_windows": "~/AppData/Roaming/minimax"}))
+    assert _user_agents(home)["minimax"]["config_dir_windows"] == "~/AppData/Roaming/minimax"
+
+
 def test_a_pressing_enter_through_every_field_writes_the_guessed_defaults(home):
     """Nothing on disk under this name — every field but ``name`` falls back
     to :func:`agentcfg.guess_defaults`'s generic guess, and ⏎ accepts all of
     them, same as ⏎ keeping a value in the edit form."""
-    _agents_session(home, "a\nminimax\n" + "\n" * 7)
+    _agents_session(home, "a\nminimax\n" + _answers({}))
     assert _user_agents(home) == {
         "minimax": {
             "executable": "minimax",
@@ -500,7 +513,7 @@ def test_a_guesses_a_config_dir_already_on_disk_and_what_is_inside_it(home):
     config_dir.mkdir(parents=True)
     (config_dir / "CLAUDE.md").touch()
     (config_dir / "skill").mkdir()
-    _agents_session(home, "a\nminimax\n" + "\n" * 7)
+    _agents_session(home, "a\nminimax\n" + _answers({}))
     written = _user_agents(home)["minimax"]
     assert written["memory_file"] == "CLAUDE.md"
     assert written["skills_dir"] == "skill"

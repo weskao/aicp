@@ -210,3 +210,70 @@ def test_config_root_preserves_absolute_paths_and_live_env(tmp_path, monkeypatch
     assert agent.config_root(tmp_path / "home") == tmp_path / "absolute"
     monkeypatch.delenv("GROK_HOME")
     assert agent.config_root() == tmp_path / "absolute"
+
+
+_WINDOWS_AGENT = {
+    "executable": "devin",
+    "config_dir": "~/.config/devin",
+    "config_dir_windows": "~/AppData/Roaming/devin",
+    "memory_file": "AGENTS.md",
+    "skills_dir": "skills",
+    "skills": ["safe-git-push"],
+    "args": ["--prompt", "{prompt}"],
+}
+
+
+def _merged(tmp_path, entries):
+    base = load_agents(Path(aicp.__file__).with_name("agents.json"))
+    return merge_user_agents(base, _write(tmp_path / "agents.json", entries))
+
+
+@pytest.mark.parametrize(("platform", "subdir"), [("win32", "AppData/Roaming/devin"), ("linux", ".config/devin")])
+def test_config_root_uses_config_dir_windows_only_on_windows(tmp_path, monkeypatch, platform, subdir):
+    agent = _merged(tmp_path, {"devin": _WINDOWS_AGENT})["devin"]
+    monkeypatch.setattr(sys, "platform", platform)
+    assert agent.config_root(tmp_path) == tmp_path / subdir
+
+
+def test_config_root_ignores_empty_config_dir_windows_on_windows(tmp_path, monkeypatch):
+    agent = _merged(tmp_path, {"devin": {**_WINDOWS_AGENT, "config_dir_windows": ""}})["devin"]
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert agent.config_root(tmp_path) == tmp_path / ".config/devin"
+
+
+def test_config_root_env_override_beats_config_dir_windows(tmp_path, monkeypatch):
+    agent = _merged(tmp_path, {"devin": {**_WINDOWS_AGENT, "config_dir_env": "DEVIN_TEST_HOME"}})["devin"]
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("DEVIN_TEST_HOME", str(tmp_path / "env"))
+    assert agent.config_root() == tmp_path / "env"
+
+
+@pytest.mark.parametrize("value", ["C:\\Users\\me\\AppData\\Roaming\\devin", "C:/Users/me/devin", "~/AppData/Roaming/devin"])
+def test_config_dir_windows_accepts_windows_absolute_and_home_paths(tmp_path, value):
+    agent = _merged(tmp_path, {"devin": {**_WINDOWS_AGENT, "config_dir_windows": value}})["devin"]
+    assert agent.config_dir_windows == value
+
+
+@pytest.mark.parametrize("value", ["relative\\dir", "AppData/devin", "/posix/only", 5, "bad\0path"])
+def test_config_dir_windows_rejects_non_absolute_values(tmp_path, value):
+    with pytest.raises(ValueError, match="config_dir_windows"):
+        _merged(tmp_path, {"devin": {**_WINDOWS_AGENT, "config_dir_windows": value}})
+
+
+def test_overriding_config_dir_drops_the_inherited_windows_path(tmp_path):
+    base = _merged(tmp_path, {"devin": _WINDOWS_AGENT})
+    merged = merge_user_agents(base, _write(tmp_path / "o.json", {"devin": {"config_dir": "~/.elsewhere"}}))
+    assert merged["devin"].config_dir_windows == ""
+
+
+def test_overriding_other_fields_keeps_the_inherited_windows_path(tmp_path):
+    base = _merged(tmp_path, {"devin": _WINDOWS_AGENT})
+    merged = merge_user_agents(base, _write(tmp_path / "o.json", {"devin": {"executable": "/opt/devin"}}))
+    assert merged["devin"].config_dir_windows == _WINDOWS_AGENT["config_dir_windows"]
+
+
+def test_overriding_config_dir_and_windows_path_together_keeps_the_new_windows_path(tmp_path):
+    base = _merged(tmp_path, {"devin": _WINDOWS_AGENT})
+    entry = {"config_dir": "~/.elsewhere", "config_dir_windows": "~/AppData/Local/devin"}
+    merged = merge_user_agents(base, _write(tmp_path / "o.json", {"devin": entry}))
+    assert merged["devin"].config_dir_windows == "~/AppData/Local/devin"
