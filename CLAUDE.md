@@ -1,7 +1,12 @@
 # CLAUDE.md
 
-## Cross-platform compatibility
+## Cross-platform
 
-Keep tools platform-agnostic. OS-specific behavior (clipboard, package installation, ANSI) belongs in a shared helper, funneled through one function, so individual tool modules stay clean.
+Code must run on macOS, Linux, and Windows (paths, separators, shell commands, line
+endings, `$HOME` vs `%USERPROFILE%`, file locking, symlinks, terminal/ANSI). Guard
+platform-specific code and say so.
 
-Support macOS, Windows, and Linux for user-facing platform behavior.
+- Reuse the shared platform helpers first: `src/aicp/_utils.py` (`IS_WINDOWS`).
+- Text I/O always passes `encoding="utf-8"` (Windows defaults to cp1252).
+- Windows is verified by CI's `windows-latest` job, not locally; POSIX-only tests are
+  skipped on Windows (`os.name == "nt"`).
