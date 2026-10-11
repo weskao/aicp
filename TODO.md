@@ -17,3 +17,6 @@ failure-avoidance patterns.
 - [x] Support "opencode" harness — detect the OpenCode agent environment
   (`~/.config/opencode`). Add an `opencode` harness so `aicp` can install skills,
   rules, and config into the paths and formats that OpenCode expects.
+- [ ] Support local models — let agents run against a local model (e.g. Ollama,
+  LM Studio), and let the user add a custom local model from `--config` →
+  `10) Agents` by pressing the `a` key.
