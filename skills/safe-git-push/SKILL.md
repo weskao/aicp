@@ -12,11 +12,17 @@ each branch of the decision runs and what to do with the result.
 
 ## Run it
 
+`scripts/safe_push.py` ships next to this `SKILL.md`, not in the repo being
+pushed. Run it by the absolute path of this skill's folder, from the repo:
+
 ```bash
-python3 scripts/safe_push.py
+python3 <this-skill-dir>/scripts/safe_push.py
 # ambiguous remote (no upstream set, multiple remotes exist):
-python3 scripts/safe_push.py --remote origin
+python3 <this-skill-dir>/scripts/safe_push.py --remote origin
 ```
+
+If the script is missing there, stop and report it. Never write a replacement
+script into the repo.
 
 Exit code `0` = pushed, fast-forwarded, or already in sync (message says
 which). A successful push is confirmed by git's own per-ref server report
