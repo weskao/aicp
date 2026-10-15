@@ -267,6 +267,32 @@ def test_changed_vendored_content_at_the_same_version_is_upgraded(configured, mo
     assert skills.detect(cli("codex"), "safe-git-push", home=h) == skills.OURS_OLDER
 
 
+def test_changed_lists_only_skills_whose_shipped_bytes_differ(configured, monkeypatch):
+    """A release that only bumped the version is not a skills change — that is
+    what keeps `aicp update` from asking about skills on every release."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    age_record(h / ".codex/skills/commit/SKILL.md", h)
+    age_record(h / ".codex/skills/safe-git-push", h)
+    assert skills.changed(home=h) == []
+
+    real = skills._expected
+    monkeypatch.setattr(
+        skills,
+        "_expected",
+        lambda spec, platform: {".": "new"} if spec.name == "commit" else real(spec, platform),
+    )
+    assert [(s.cli, s.skill) for s in skills.changed(home=h)] == [("codex", "commit")]
+
+
+def test_changed_ignores_missing_and_foreign_skills(configured):
+    h = configured("codex")
+    target = h / ".codex/skills/commit/SKILL.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("# my own commit skill\n", encoding="utf-8")
+    assert skills.changed(home=h) == []
+
+
 def test_a_newer_aicp_install_is_not_downgraded(configured):
     h = configured("codex")
     skills.install([cli("codex")], home=h)

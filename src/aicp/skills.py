@@ -67,6 +67,7 @@ __all__ = [
     "Platform",
     "Skill",
     "SkillStatus",
+    "changed",
     "detect",
     "full_status",
     "install",
@@ -581,6 +582,22 @@ def full_status(
                 SkillStatus(cli.name, name, target_path(cli, name, home), state, version)
             )
     return out
+
+
+def changed(
+    clis: Iterable[CLI] = ROSTER, home: Path | None = None
+) -> list[SkillStatus]:
+    """Installed aicp skills whose bytes differ from what this version ships —
+    what a release actually changed, unlike a bare version bump."""
+    clis = tuple(clis)
+    by_name = {c.name: c for c in clis}
+    return [
+        s
+        for s in full_status(clis, home)
+        if s.state == OURS_OLDER
+        and _disk_hashes(SKILLS[s.skill], s.target)
+        != _expected(SKILLS[s.skill], _platform(by_name[s.cli]))
+    ]
 
 
 def status_json(

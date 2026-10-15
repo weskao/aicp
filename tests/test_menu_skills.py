@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from aicp import skills
-from aicp.menu import ROWS, config_menu
+from aicp.menu import ROWS, config_menu, post_update
 
 
 def _row_number(msgid: str) -> int:
@@ -156,6 +156,51 @@ def test_the_inline_status_refreshes_after_an_install(menu, codex):
 def test_a_cli_without_a_config_dir_is_never_created(menu, codex):
     menu(f"{SKILLS_ROW}\ny\nq\n")
     assert not (Path.home() / ".vibe").exists()
+
+
+# ── after `aicp update`: the same Skills screen, only when a skill changed ───
+
+
+OLD_RELEASE_TEXT = "# commit skill as an older aicp shipped it\n"
+
+
+@pytest.fixture
+def codex_changed(codex) -> Path:
+    """Skills installed by an older aicp whose commit skill has since changed:
+    the disk matches aicp's record, but not what this version ships."""
+    skills.install()
+    target = codex / skills.SKILLS["commit"].rel_target
+    target.write_text(OLD_RELEASE_TEXT, encoding="utf-8")
+    records = skills._load_state()
+    records[str(target)]["files"] = {".": skills._sha(target.read_bytes())}
+    skills._save_state(records)
+    return target
+
+
+def _post_update(keys: str) -> str:
+    out = io.StringIO()
+    assert post_update(stdin=io.StringIO(keys), stdout=out) == 0
+    return out.getvalue()
+
+
+def test_a_changed_skill_gets_the_skills_screen_and_upgrades_on_yes(codex_changed):
+    out = _post_update("y\n")
+    assert "Skills" in out and "Install/upgrade" in out
+    assert codex_changed.read_text(encoding="utf-8") != OLD_RELEASE_TEXT
+    assert skills.detect(_cli("codex"), "commit") == skills.CURRENT
+
+
+def test_a_changed_skill_is_left_alone_on_no_or_eof(codex_changed):
+    """EOF is the Windows background updater's stdin: no means no."""
+    for keys in ("n\n", ""):
+        _post_update(keys)
+        assert codex_changed.read_text(encoding="utf-8") == OLD_RELEASE_TEXT
+
+
+def test_unchanged_skills_say_nothing_after_an_update(codex):
+    """Missing skills are the Skills row's business, not every update's."""
+    assert _post_update("y\n") == ""
+    assert not (codex / skills.SKILLS["commit"].rel_target).exists()
 
 
 # ── Doctor: what is otherwise silent ─────────────────────────────────────────

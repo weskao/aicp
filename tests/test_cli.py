@@ -664,8 +664,24 @@ def test_update_runs_update_kit_and_exits_with_its_code(
     assert (seen["app"], seen["repo"], seen["dist"]) == ("aicp", "weskao/aicp", "aicp-cli")
     assert seen["out"] is sys.stderr
     assert seen["lang"] == i18n.LANGUAGE
+    # the freshly installed aicp, not this old process, judges its own skills
+    assert seen["after"] == [[sys.executable, "-m", "aicp.cli", "--post-update"]]
     # the update command must not also advertise an update
     assert "is available" not in capsys.readouterr().err
+
+
+def test_post_update_runs_the_skills_check_quietly(run, aicprc, git_repo, monkeypatch, capsys):
+    calls: list[bool] = []
+    monkeypatch.setattr(cli.menu, "post_update", lambda: calls.append(True) or 0)
+    _newer_release(monkeypatch)
+    assert run(git_repo, "--post-update") == 0
+    assert calls == [True]
+    assert "is available" not in capsys.readouterr().err
+
+
+def test_post_update_is_internal_and_hidden_from_help(capsys):
+    assert cli.main(["--help"]) == 0
+    assert "--post-update" not in capsys.readouterr().out
 
 
 def test_update_is_listed_in_help(capsys):

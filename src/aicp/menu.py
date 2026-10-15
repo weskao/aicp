@@ -111,7 +111,7 @@ from .config import (
 from .contracts import ROSTER
 from .present import render_panel, width
 
-__all__ = ["ROWS", "MenuState", "Row", "config_menu", "swap_ai"]
+__all__ = ["ROWS", "MenuState", "Row", "config_menu", "post_update", "swap_ai"]
 
 _ROSTER_NAMES: tuple[str, ...] = tuple(c.name for c in ROSTER)
 #: What the AI CLI order row puts between two names, and the unit the order
@@ -2354,6 +2354,15 @@ def _tui(state: MenuState, stdin: IO[str], out: IO[str]) -> int:
         # menu that saves as it goes has nothing to roll back.
         print(file=out)
         return 0
+
+
+def post_update(*, stdin: IO[str] | None = None, stdout: IO[str] | None = None) -> int:
+    """Run by the freshly installed aicp after ``aicp update``: the Skills
+    row's own screen, but only when this release changed a skill you have."""
+    if not skills.changed():
+        return 0
+    _skills_action(MenuState.from_settings(resolve()), stdin or sys.stdin, stdout or sys.stdout)
+    return 0
 
 
 def swap_ai(

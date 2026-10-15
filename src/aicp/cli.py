@@ -274,6 +274,9 @@ def build_parser() -> argparse.ArgumentParser:
             "refused for a dev checkout)",
         ),
     )
+    # Internal: `update` runs this in the freshly installed aicp, whose code is
+    # the only one that knows what the new release's skills look like.
+    parser.add_argument("--post-update", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--doctor", action="store_true",
         help=t("help_doctor", "report where each vendored skill stands for each CLI"),
@@ -669,11 +672,15 @@ def _dispatch(args: argparse.Namespace) -> int:
     settings = config.resolve()
     export_settings(settings)
 
-    if args.update:
+    if args.update or args.post_update:
         global _updated
         _updated = True
+    if args.post_update:
+        return menu.post_update()
+    if args.update:
         return update_kit.update(
-            app="aicp", repo=_REPO, dist=_DIST, lang=i18n.LANGUAGE, out=sys.stderr
+            app="aicp", repo=_REPO, dist=_DIST, lang=i18n.LANGUAGE, out=sys.stderr,
+            after=[[sys.executable, "-m", "aicp.cli", "--post-update"]],
         )
     if args.doctor:
         return _doctor(as_json=args.json)
