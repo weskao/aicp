@@ -94,7 +94,10 @@ aicp update      # same as: aicp --update
 ```
 
 Installs the newest `vX.Y.Z` git tag of `weskao/aicp` (via `uv tool install --force`
-or `pipx install --force`) and never prompts. Exit code `0` = updated or already
+or `pipx install --force`) without asking. If the new release changed a skill you
+have installed, it then shows the same screen as the **Skills** row in `aicp --config`
+and asks `Install/upgrade N skill(s)? [y/N]` (no answer, as in CI, means no). A release
+that only bumped the version asks nothing. Exit code `0` = updated or already
 current, `1` = could not check (offline, rate limit) or the install failed, `2` =
 dev checkout (use `git pull`) or an install method `aicp` cannot update (the manual
 command is printed). On Windows the install continues in a detached process after
