@@ -10,7 +10,12 @@ authors = [{ name = "Wes Kao" }]
 license = { text = "MIT" }
 dependencies = [
     "telegram-kit>=0.2.2,<0.3",
+    "update-kit>=0.1,<0.2",
 ]
+
+# Local checkout until update-kit 0.1 is published; CI sets UV_NO_SOURCES=1.
+[tool.uv.sources]
+update-kit = { path = "../update-kit", editable = true }
 
 [project.scripts]
 aicp = "aicp.cli:main"

@@ -14,6 +14,8 @@ concurrency:
 
 env:
   PYTHONUTF8: "1"
+  # update-kit resolves from PyPI: CI has no sibling ../update-kit checkout.
+  UV_NO_SOURCES: "1"
 
 jobs:
   release:

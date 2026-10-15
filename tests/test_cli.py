@@ -24,9 +24,10 @@ import sys
 from pathlib import Path
 
 import pytest
+import update_kit
 from conftest import rmtree
 
-from aicp import budget, cli, config, gitflow, i18n, runner, update_check
+from aicp import budget, cli, config, gitflow, i18n, runner
 from aicp import notify as notify_mod
 
 # ── local helpers ────────────────────────────────────────────────────────────
@@ -67,15 +68,6 @@ def prompts(call_log: Path) -> list[str]:
 
 
 # ── local fixtures ───────────────────────────────────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def silence_pypi(monkeypatch):
-    """Existing tests must not hit PyPI or print an update hint."""
-    monkeypatch.setattr(
-        "aicp.update_check.fetch_pypi",
-        lambda *_a, **_k: json.dumps({"info": {"version": "0.0.0"}}),
-    )
 
 
 @pytest.fixture(autouse=True)
@@ -583,110 +575,6 @@ def test_a_real_run_applies_the_bridge(run, aicprc, git_repo_synced, stub_cli):
     assert gitflow.resolve_tz() == "Asia/Tokyo"
 
 
-def test_a_newer_pypi_release_prints_an_upgrade_hint_on_stderr(
-    run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
-):
-    stub_cli()
-    monkeypatch.setattr(
-        "aicp.update_check.fetch_pypi",
-        lambda *_a, **_k: json.dumps({"info": {"version": "99.0.0"}}),
-    )
-    repo, _bare = git_repo_synced
-    assert run(repo) == 0
-    err = capsys.readouterr().err
-    assert "99.0.0 is available" in err
-    assert "uv tool upgrade aicp-cli" in err
-
-
-def test_update_check_off_prints_no_hint(
-    run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
-):
-    stub_cli()
-    aicprc.write_text(json.dumps({"AICP_UPDATE_CHECK": "0"}), encoding="utf-8")
-    monkeypatch.setattr(
-        "aicp.update_check.fetch_pypi",
-        lambda *_a, **_k: json.dumps({"info": {"version": "99.0.0"}}),
-    )
-    repo, _bare = git_repo_synced
-    assert run(repo) == 0
-    err = capsys.readouterr().err
-    assert "99.0.0" not in err
-    assert "uv tool upgrade" not in err
-
-
-def test_update_hint_does_not_mix_into_json_stdout(
-    run, aicprc, git_repo, stub_cli, monkeypatch, capsys
-):
-    stub_cli()
-    monkeypatch.setattr(
-        "aicp.update_check.fetch_pypi",
-        lambda *_a, **_k: json.dumps({"info": {"version": "99.0.0"}}),
-    )
-    assert run(git_repo, "--doctor", "--json") == 0
-    captured = capsys.readouterr()
-    json.loads(captured.out)
-    assert "99.0.0 is available" in captured.err
-
-
-def _on_a_terminal(monkeypatch, answer: str) -> list[str]:
-    """Pretend stdin/stderr are a TTY and answer the prompt with *answer*;
-    returns the release-notes URLs the prompt was shown."""
-    shown: list[str] = []
-    monkeypatch.setattr(
-        "aicp.update_check.fetch_pypi",
-        lambda *_a, **_k: json.dumps({"info": {"version": "99.0.0"}}),
-    )
-    monkeypatch.setattr(cli, "is_interactive", lambda *_a: True)
-    monkeypatch.setattr(
-        cli.menu, "update_prompt", lambda _found, notes, **_k: shown.append(notes) or answer
-    )
-    return shown
-
-
-def test_on_a_terminal_the_update_is_asked_instead_of_hinted(
-    run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
-):
-    stub_cli()
-    shown = _on_a_terminal(monkeypatch, update_check.SKIP)
-    repo, _bare = git_repo_synced
-    assert run(repo) == 0
-    assert shown == ["https://github.com/weskao/aicp/releases/tag/v99.0.0"]
-    assert "uv tool upgrade" not in capsys.readouterr().err
-
-
-def test_skip_until_next_version_is_remembered(
-    run, aicprc, git_repo_synced, stub_cli, monkeypatch
-):
-    stub_cli()
-    _on_a_terminal(monkeypatch, update_check.SKIP_VERSION)
-    repo, _bare = git_repo_synced
-    assert run(repo) == 0
-    cache = Path.home() / ".aicp" / "update-check.json"
-    assert json.loads(cache.read_text(encoding="utf-8"))["skipped"] == "99.0.0"
-
-
-def test_a_failed_upgrade_tells_the_user_the_manual_command(
-    run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
-):
-    stub_cli()
-    _on_a_terminal(monkeypatch, update_check.UPDATE_NOW)
-    monkeypatch.setattr(cli, "_UPGRADE", [sys.executable, "-c", "raise SystemExit(3)"])
-    repo, _bare = git_repo_synced
-    assert run(repo) == 0
-    assert "uv tool upgrade aicp-cli" in capsys.readouterr().err
-
-
-def test_a_successful_upgrade_prints_no_warning(
-    run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
-):
-    stub_cli()
-    _on_a_terminal(monkeypatch, update_check.UPDATE_NOW)
-    monkeypatch.setattr(cli, "_UPGRADE", [sys.executable, "-c", "pass"])
-    repo, _bare = git_repo_synced
-    assert run(repo) == 0
-    assert "uv tool upgrade" not in capsys.readouterr().err
-
-
 def _console_scripts() -> dict[str, str]:
     """``[project.scripts]`` from pyproject.toml: name → ``module:func``."""
     import re
@@ -696,22 +584,95 @@ def _console_scripts() -> dict[str, str]:
     return dict(re.findall(r'^([\w-]+)\s*=\s*"([^"]+)"', section, re.MULTILINE))
 
 
+def _newer_release(monkeypatch, tty: bool = True) -> None:
+    """A TTY stderr and a newer tag, with no network or shared cache touched."""
+    monkeypatch.setattr(update_kit, "should_hint", lambda *_a, **_k: tty)
+    monkeypatch.setattr(update_kit, "check", lambda **_k: "v99.0.0")
+
+
+def test_a_newer_release_prints_the_one_line_hint_on_stderr(
+    run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
+):
+    stub_cli()
+    _newer_release(monkeypatch)
+    repo, _bare = git_repo_synced
+    assert run(repo) == 0
+    err = capsys.readouterr().err
+    assert "aicp v99.0.0 is available" in err
+    assert "aicp update" in err
+
+
+def test_no_hint_when_stderr_is_not_a_terminal(
+    run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
+):
+    stub_cli()
+    _newer_release(monkeypatch, tty=False)
+    repo, _bare = git_repo_synced
+    assert run(repo) == 0
+    assert "99.0.0" not in capsys.readouterr().err
+
+
+def test_update_check_off_prints_no_hint(
+    run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
+):
+    stub_cli()
+    aicprc.write_text(json.dumps({"AICP_UPDATE_CHECK": "0"}), encoding="utf-8")
+    _newer_release(monkeypatch)
+    repo, _bare = git_repo_synced
+    assert run(repo) == 0
+    assert "99.0.0" not in capsys.readouterr().err
+
+
+def test_update_hint_does_not_mix_into_json_stdout(
+    run, aicprc, git_repo, stub_cli, monkeypatch, capsys
+):
+    stub_cli()
+    _newer_release(monkeypatch)
+    assert run(git_repo, "--doctor", "--json") == 0
+    captured = capsys.readouterr()
+    json.loads(captured.out)
+    assert "99.0.0 is available" in captured.err
+
+
+@pytest.mark.parametrize("argv", [["update"], ["--update"]])
+def test_update_runs_update_kit_and_exits_with_its_code(
+    argv, run, aicprc, git_repo, monkeypatch, capsys
+):
+    seen: dict = {}
+
+    def fake_update(**kwargs):
+        seen.update(kwargs)
+        return 2
+
+    monkeypatch.setattr(update_kit, "update", fake_update)
+    _newer_release(monkeypatch)
+    assert run(git_repo, *argv) == 2
+    assert (seen["app"], seen["repo"], seen["dist"]) == ("aicp", "weskao/aicp", "aicp-cli")
+    assert seen["out"] is sys.stderr
+    assert seen["lang"] == i18n.LANGUAGE
+    # the update command must not also advertise an update
+    assert "is available" not in capsys.readouterr().err
+
+
+def test_update_is_listed_in_help(capsys):
+    assert cli.main(["--help"]) == 0
+    assert "--update" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("argv", [["--help"], ["-h"], ["--version"], ["--bogus"]])
 @pytest.mark.parametrize("script", sorted(_console_scripts()))
-def test_every_script_offers_the_update_on_every_way_out(script, argv, monkeypatch, capsys):
-    """--help, --version and a usage error get the update prompt too. A new
-    console script that skips main's start/offer flow fails here."""
+def test_every_script_hints_the_update_on_every_way_out(script, argv, monkeypatch, capsys):
+    """--help, --version and a usage error get the hint too. A new console
+    script that skips main's hint flow fails here."""
     import importlib
 
     module, func = _console_scripts()[script].split(":")
-    seen: list[str] = []
-    monkeypatch.setattr(cli, "_start_update_check", lambda: seen.append("start") or "started")
-    monkeypatch.setattr(cli, "_offer_update", lambda started: seen.append(f"offer:{started}"))
+    _newer_release(monkeypatch)
     try:
         getattr(importlib.import_module(module), func)(argv)
     except SystemExit:
         pass
-    assert seen == ["start", "offer:started"]
+    assert "99.0.0 is available" in capsys.readouterr().err
 
 
 # ── wiring contracts ─────────────────────────────────────────────────────────

@@ -87,20 +87,23 @@ uv tool uninstall aicp-cli
 scheduled job, so upgrades and `aicp --config` changes need no service restart;
 the next invocation uses the new version or settings.
 
-When a newer release is on PyPI, aicp asks after the command finishes:
-**Update now** (runs `uv tool upgrade aicp-cli`), **Skip** (ask again next
-run), or **Skip until next version**. Off a terminal (CI, pipes) it prints a
-one-line hint instead. Turn it off with the **Check for updates** row in
-`aicp --config`. Every way of running `aicp` gets this — any command,
-`--help`, `--version`, or a mistyped flag.
+## Updating
 
-The mechanism lives in `src/aicp/update_check.py`, stdlib-only, so other
-projects can copy it: `offer(started, ask, cache_path=..., upgrade=[...])`
-acts on the answer, and `ask(found)` is the only part that depends on the UI.
-`fetch_github` covers a tool released as GitHub tags instead of PyPI, and
-`upgrade` can be a callable (`lambda found: [[...], [...]]`) when the
-upgrade takes more than one command — an install step followed by a
-post-install setup step, for example.
+```sh
+aicp update      # same as: aicp --update
+```
+
+Installs the newest `vX.Y.Z` git tag of `weskao/aicp` (via `uv tool install --force`
+or `pipx install --force`) and never prompts. Exit code `0` = updated or already
+current, `1` = could not check (offline, rate limit) or the install failed, `2` =
+dev checkout (use `git pull`) or an install method `aicp` cannot update (the manual
+command is printed). On Windows the install continues in a detached process after
+`aicp` exits. Messages follow the `aicp --config` language (English / 繁體中文).
+
+When a newer tag exists, `aicp` prints a one-line hint on stderr after the command
+finishes — only on an interactive terminal (never in CI, pipes or `--json`), checked
+at most once a day. Turn it off with the **Check for updates** row in `aicp --config`.
+The mechanism is the shared [`update-kit`](https://github.com/weskao/update-kit) library.
 
 ## Set up skills
 

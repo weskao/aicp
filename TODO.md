@@ -23,5 +23,5 @@ failure-avoidance patterns.
 
 ## New features
 
-- [ ] Add an `update` command (and `--update` flag) — update the current project to
+- [x] Add an `update` command (and `--update` flag) — update the current project to
   the latest git tag version.

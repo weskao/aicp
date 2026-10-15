@@ -36,6 +36,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import NoReturn
 
+import update_kit
+
 from . import (
     __version__,
     agentcfg,
@@ -48,9 +50,7 @@ from . import (
     present,
     runner,
     skills,
-    update_check,
 )
-from ._keyreader import is_interactive
 from ._utils import BLUE, BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW, have
 from .agents import executable
 from .contracts import ROSTER
@@ -265,6 +265,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config", action="store_true",
         help=t("help_config", "settings menu: the two steps, the language, the CLI order"),
+    )
+    parser.add_argument(
+        "--update", action="store_true",
+        help=t(
+            "help_update",
+            "update aicp to the latest git tag, no prompts (`aicp update` works too; "
+            "refused for a dev checkout)",
+        ),
     )
     parser.add_argument(
         "--doctor", action="store_true",
@@ -661,6 +669,10 @@ def _dispatch(args: argparse.Namespace) -> int:
     settings = config.resolve()
     export_settings(settings)
 
+    if args.update:
+        return update_kit.update(
+            app="aicp", repo=_REPO, dist=_DIST, lang=i18n.LANGUAGE, out=sys.stderr
+        )
     if args.doctor:
         return _doctor(as_json=args.json)
     if args.agents is not None:
@@ -687,66 +699,33 @@ def _dispatch(args: argparse.Namespace) -> int:
     return _flow(settings, verbose=args.verbose)
 
 
-def _update_cache_path() -> Path:
-    return Path.home() / ".aicp" / "update-check.json"
+_REPO = "weskao/aicp"
+_DIST = "aicp-cli"
 
 
-def _start_update_check() -> update_check.Started | None:
-    """Kick off the PyPI check in the background so it overlaps the command."""
+def _hint_update(argv: Sequence[str]) -> None:
+    """One cached line on a terminal's stderr when a newer tag exists. Never
+    raises, never changes the exit code; silent for `update` itself."""
     try:
-        settings = config.resolve()
-        if not settings.update_check:
-            return None
-        return update_check.start(
-            "aicp-cli",
-            __version__,
-            cache_path=_update_cache_path(),
-        )
+        if "update" in argv[:1] or "--update" in argv:
+            return
+        if not update_kit.should_hint(sys.stderr) or not config.resolve().update_check:
+            return
+        latest = update_kit.check(repo=_REPO, current=__version__)
+        if latest:
+            print(update_kit.hint("aicp", latest, __version__, i18n.LANGUAGE), file=sys.stderr)
     except Exception:  # noqa: BLE001 - a hint must never fail the command
-        return None
-
-
-#: What "Update now" runs; the release page each prompt links to.
-_UPGRADE = ["uv", "tool", "upgrade", "aicp-cli"]
-_RELEASE_NOTES = "https://github.com/weskao/aicp/releases/tag/v%s"
-
-
-def _hint_update(found: update_check.UpdateAvailable) -> str:
-    """The ``ask`` off a terminal (CI, pipes): a one-shot hint, never a block."""
-    print(
-        t("update_available", "aicp %s is available (you have %s)", found.latest, found.current),
-        file=sys.stderr,
-    )
-    print(t("update_command", "  uv tool upgrade aicp-cli"), file=sys.stderr)
-    return update_check.SKIP
-
-
-def _ask_update(found: update_check.UpdateAvailable) -> str:
-    return menu.update_prompt(found, _RELEASE_NOTES % found.latest, stdin=sys.stdin, out=sys.stderr)
-
-
-def _offer_update(started: update_check.Started | None) -> None:
-    """After the command: ask (or hint) about a newer release. Never changes
-    the exit code — :func:`update_check.offer` never raises."""
-    ask = _ask_update if is_interactive(sys.stdin, sys.stderr) else _hint_update
-    answer = update_check.offer(started, ask, cache_path=_update_cache_path(), upgrade=_UPGRADE)
-    if answer == update_check.UPGRADE_FAILED:
-        print(
-            f"{YELLOW}⚠{RESET} "
-            + t("update_failed", "upgrade did not finish — run it yourself: uv tool upgrade aicp-cli"),
-            file=sys.stderr,
-        )
+        return
 
 
 def main(argv: list[str] | None = None) -> int:
-    """The one flow every way out goes through: the update check starts
-    first and is offered last — after a command, --help/--version, or a
-    usage error alike. A new command added to :func:`_dispatch` gets it free."""
-    started = _start_update_check()
+    """The one flow every way out goes through: the update hint is printed
+    last — after a command, --help/--version, or a usage error alike. A new
+    command added to :func:`_dispatch` gets it free."""
     try:
         return _main(argv)
     finally:
-        _offer_update(started)
+        _hint_update(sys.argv[1:] if argv is None else argv)
 
 
 def _main(argv: list[str] | None) -> int:
