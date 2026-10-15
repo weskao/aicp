@@ -665,7 +665,7 @@ def test_update_runs_update_kit_and_exits_with_its_code(
     assert seen["out"] is sys.stderr
     assert seen["lang"] == i18n.LANGUAGE
     # the freshly installed aicp, not this old process, judges its own skills
-    assert seen["after"] == [[sys.executable, "-m", "aicp.cli", "--post-update"]]
+    assert seen["after"] == [[sys.executable, "-I", "-m", "aicp.cli", "--post-update"]]
     # the update command must not also advertise an update
     assert "is available" not in capsys.readouterr().err
 
@@ -677,6 +677,31 @@ def test_post_update_runs_the_skills_check_quietly(run, aicprc, git_repo, monkey
     assert run(git_repo, "--post-update") == 0
     assert calls == [True]
     assert "is available" not in capsys.readouterr().err
+
+
+def test_the_post_update_step_never_imports_an_aicp_from_the_cwd(
+    run, aicprc, git_repo, monkeypatch, tmp_path
+):
+    """update-kit runs `after` in the caller's cwd — often a cloned repo. A
+    planted `aicp/` there must not be what the freshly installed aicp runs."""
+    seen: dict = {}
+    monkeypatch.setattr(update_kit, "update", lambda **kw: seen.update(kw) or 0)
+    _newer_release(monkeypatch)
+    assert run(git_repo, "update") == 0
+
+    hostile = tmp_path / "cloned-repo"
+    (hostile / "aicp").mkdir(parents=True)
+    marker = tmp_path / "hijacked"
+    (hostile / "aicp" / "__init__.py").write_text(
+        f"open({str(marker)!r}, 'w').close()\n", encoding="utf-8"
+    )
+    (hostile / "aicp" / "cli.py").write_text("", encoding="utf-8")
+    for step in seen["after"]:
+        result = subprocess.run(
+            step, cwd=hostile, capture_output=True, text=True, encoding="utf-8", check=False
+        )
+        assert result.returncode == 0, result.stderr
+    assert not marker.exists()
 
 
 def test_post_update_is_internal_and_hidden_from_help(capsys):

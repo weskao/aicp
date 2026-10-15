@@ -680,7 +680,8 @@ def _dispatch(args: argparse.Namespace) -> int:
     if args.update:
         return update_kit.update(
             app="aicp", repo=_REPO, dist=_DIST, lang=i18n.LANGUAGE, out=sys.stderr,
-            after=[[sys.executable, "-m", "aicp.cli", "--post-update"]],
+            # -I: update-kit runs this in the user's cwd; never import an aicp/ found there
+            after=[[sys.executable, "-I", "-m", "aicp.cli", "--post-update"]],
         )
     if args.doctor:
         return _doctor(as_json=args.json)
