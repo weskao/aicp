@@ -1,3 +1,10 @@
+## [0.21.1] - 2026-10-15
+
+### 📚 Documentation
+
+- Add local model support to TODO
+- **safe-git-push:** Clarify script path and prohibit replacements
+- Note planned update command
 ## [0.21.0] - 2026-10-10
 
 ### 🚀 Features
