@@ -623,6 +623,17 @@ def test_update_check_off_prints_no_hint(
     assert "99.0.0" not in capsys.readouterr().err
 
 
+def test_ctrl_c_during_the_hint_lookup_is_swallowed(aicprc, monkeypatch, capsys):
+    monkeypatch.setattr(update_kit, "should_hint", lambda *_a, **_k: True)
+
+    def interrupted(**_k):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(update_kit, "check", interrupted)
+    cli._hint_update()  # must not raise
+    assert capsys.readouterr().err == ""
+
+
 def test_update_hint_does_not_mix_into_json_stdout(
     run, aicprc, git_repo, stub_cli, monkeypatch, capsys
 ):

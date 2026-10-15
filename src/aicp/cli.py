@@ -717,7 +717,7 @@ def _hint_update() -> None:
         latest = update_kit.check(repo=_REPO, current=__version__)
         if latest:
             print(update_kit.hint("aicp", latest, __version__, i18n.LANGUAGE), file=sys.stderr)
-    except Exception:  # noqa: BLE001 - a hint must never fail the command
+    except (Exception, KeyboardInterrupt):  # noqa: BLE001 - a hint must never fail the command; Ctrl-C just skips it
         return
 
 
