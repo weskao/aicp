@@ -20,3 +20,8 @@ failure-avoidance patterns.
 - [ ] Support local models — let agents run against a local model (e.g. Ollama,
   LM Studio), and let the user add a custom local model from `--config` →
   `10) Agents` by pressing the `a` key.
+
+## New features
+
+- [ ] Add an `update` command (and `--update` flag) — update the current project to
+  the latest git tag version.
