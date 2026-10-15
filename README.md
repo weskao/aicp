@@ -101,7 +101,7 @@ command is printed). On Windows the install continues in a detached process afte
 `aicp` exits. Messages follow the `aicp --config` language (English / 繁體中文).
 
 When a newer tag exists, `aicp` prints a one-line hint on stderr after the command
-finishes — only on an interactive terminal (never in CI, pipes or `--json`), checked
+finishes — never on stdout, only on an interactive terminal's stderr (so not in CI or pipes), checked
 at most once a day. Turn it off with the **Check for updates** row in `aicp --config`.
 The mechanism is the shared [`update-kit`](https://github.com/weskao/update-kit) library.
 

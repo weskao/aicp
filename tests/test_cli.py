@@ -634,7 +634,10 @@ def test_update_hint_does_not_mix_into_json_stdout(
     assert "99.0.0 is available" in captured.err
 
 
-@pytest.mark.parametrize("argv", [["update"], ["--update"]])
+@pytest.mark.parametrize(
+    "argv",
+    [["update"], ["--update"], ["--verbose", "update"], ["-v", "--update"]],
+)
 def test_update_runs_update_kit_and_exits_with_its_code(
     argv, run, aicprc, git_repo, monkeypatch, capsys
 ):

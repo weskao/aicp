@@ -670,6 +670,8 @@ def _dispatch(args: argparse.Namespace) -> int:
     export_settings(settings)
 
     if args.update:
+        global _updated
+        _updated = True
         return update_kit.update(
             app="aicp", repo=_REPO, dist=_DIST, lang=i18n.LANGUAGE, out=sys.stderr
         )
@@ -701,13 +703,14 @@ def _dispatch(args: argparse.Namespace) -> int:
 
 _REPO = "weskao/aicp"
 _DIST = "aicp-cli"
+_updated = False  # set once the parsed command is `update`, so the hint stays quiet
 
 
-def _hint_update(argv: Sequence[str]) -> None:
+def _hint_update() -> None:
     """One cached line on a terminal's stderr when a newer tag exists. Never
     raises, never changes the exit code; silent for `update` itself."""
     try:
-        if "update" in argv[:1] or "--update" in argv:
+        if _updated:
             return
         if not update_kit.should_hint(sys.stderr) or not config.resolve().update_check:
             return
@@ -722,10 +725,12 @@ def main(argv: list[str] | None = None) -> int:
     """The one flow every way out goes through: the update hint is printed
     last — after a command, --help/--version, or a usage error alike. A new
     command added to :func:`_dispatch` gets it free."""
+    global _updated
+    _updated = False
     try:
         return _main(argv)
     finally:
-        _hint_update(sys.argv[1:] if argv is None else argv)
+        _hint_update()
 
 
 def _main(argv: list[str] | None) -> int:

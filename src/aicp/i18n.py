@@ -244,7 +244,6 @@ CATALOG: dict[str, str] = {
     "agents_needs_name": "✗ %s 需要一個 agent 名稱",
     "agents_done_enabled": "✓ 已開啟 %s",
     "agents_done_disabled": "✓ 已關閉 %s",
-    "help_update": "更新 aicp 到最新的 git tag，不會詢問（`aicp update` 同樣可用；開發版 checkout 會拒絕）",
     "agents_done_updated": "✓ 已更新 %s",
     "agents_done_added": "✓ 已新增 %s",
     "agents_done_reset": "✓ %s 已還原成內建定義",
@@ -301,6 +300,7 @@ CATALOG: dict[str, str] = {
     "help_install_skills": "把內建的 skills 安裝到每個已設定的 CLI",
     "help_yes": "--install-skills：實際寫入（不加就只是預覽）",
     "help_force": "--install-skills：覆蓋別人的同名檔案，並留下 .bak",
+    "help_update": "更新 aicp 到最新的 git tag，不會詢問（`aicp update` 同樣可用；開發版 checkout 會拒絕）",
     "help_epilog": "以上任一 flag 都可以省略開頭的 `--`（`aicp config` 等同 `aicp --config`）。",
 }
 
