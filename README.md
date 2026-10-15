@@ -2,6 +2,14 @@
 
 AI commit + push, with a git-verified result summary.
 
+**`aicp`** — one command: AI commits, pushes, then git verifies the result.
+
+![aicp run: commit, push, and the git-verified result table](docs/images/aicp-run.jpeg)
+
+**`aicp --config`** — every setting in one menu.
+
+![aicp --config: the settings menu under the logo](docs/images/aicp-config.jpeg)
+
 `aicp` runs an AI coding CLI to write your commit message(s) and push, walking
 a fallback chain until one exits 0; anything not installed is skipped. It
 sends that CLI two literal prompts, `/commit` then `/safe-git-push`.
@@ -171,8 +179,6 @@ CLI's raw output live instead of showing a spinner.
 
 Every long flag also works without its leading `--` — `aicp config` is the
 same as `aicp --config`.
-
-![aicp run: commit, push, and the git-verified result table](docs/images/aicp-run.png)
 
 `aicp --config` is one menu for everything that isn't "commit and push
 right now": which steps run, message language, fallback CLI order, the
