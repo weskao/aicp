@@ -93,19 +93,25 @@ the next invocation uses the new version or settings.
 aicp update      # same as: aicp --update
 ```
 
-Installs the newest `vX.Y.Z` git tag of `weskao/aicp` (via `uv tool install --force`
-or `pipx install --force`) without asking. If the new release changed a skill you
+Always installs the newest `vX.Y.Z` git tag of `weskao/aicp` (via `uv tool install --force`
+or `pipx install --force`, whichever is on `PATH`) without asking — a dev checkout or
+an unmanaged install is replaced by it too. If the new release changed a skill you
 have installed, it then shows the same screen as the **Skills** row in `aicp --config`
 and asks `Install/upgrade N skill(s)? [y/N]` (no answer, as in CI, means no). A release
 that only bumped the version asks nothing. Exit code `0` = updated or already
 current, `1` = could not check (offline, rate limit) or the install failed, `2` =
-dev checkout (use `git pull`) or an install method `aicp` cannot update (the manual
-command is printed). On Windows the install continues in a detached process after
+neither `uv` nor `pipx` is installed (the manual `pip` command is printed). On Windows the install continues in a detached process after
 `aicp` exits. Messages follow the `aicp --config` language (English / 繁體中文).
 
-When a newer tag exists, `aicp` prints a one-line hint on stderr after the command
-finishes — never on stdout, only on an interactive terminal's stderr (so not in CI or pipes), checked
-at most once a day. Turn it off with the **Check for updates** row in `aicp --config`.
+When a newer tag exists, every other command asks after it finishes: **Update now**
+(runs `aicp update`), **Skip** (ask again next run), or **Skip until next version**
+(remembered in `~/.aicp/update-check.json`; a newer tag asks again). `q`, Ctrl+C or
+EOF means Skip, and the answer never changes the command's exit code. Off a
+terminal (CI, pipes) it prints a one-shot hint on stderr instead (`aicp X.Y.Z is
+available (you have …)` plus `aicp update`), never a blocking prompt. Never on
+stdout, checked at most once a day, and never after `aicp update` itself. Every way of running `aicp` gets
+it — any command, `--help`, `--version`, or a mistyped flag. Turn it off with the
+**Check for updates** row in `aicp --config`.
 The mechanism is the shared [`update-kit`](https://github.com/weskao/update-kit) library.
 
 ## Set up skills

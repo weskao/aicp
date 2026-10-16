@@ -584,10 +584,12 @@ def _console_scripts() -> dict[str, str]:
     return dict(re.findall(r'^([\w-]+)\s*=\s*"([^"]+)"', section, re.MULTILINE))
 
 
-def _newer_release(monkeypatch, tty: bool = True) -> None:
-    """A TTY stderr and a newer tag, with no network or shared cache touched."""
+def _newer_release(monkeypatch, tty: bool = True, interactive: bool = False) -> None:
+    """A TTY stderr and a newer tag, with no network or shared cache touched.
+    *interactive* is whether stdin is a terminal too (the prompt, not the hint)."""
     monkeypatch.setattr(update_kit, "should_hint", lambda *_a, **_k: tty)
     monkeypatch.setattr(update_kit, "check", lambda **_k: "v99.0.0")
+    monkeypatch.setattr(cli, "is_interactive", lambda *_a: interactive)
 
 
 def test_a_newer_release_prints_the_one_line_hint_on_stderr(
@@ -598,18 +600,21 @@ def test_a_newer_release_prints_the_one_line_hint_on_stderr(
     repo, _bare = git_repo_synced
     assert run(repo) == 0
     err = capsys.readouterr().err
-    assert "aicp v99.0.0 is available" in err
-    assert "aicp update" in err
+    assert "aicp 99.0.0 is available (you have " in err
+    assert "  aicp update" in err
 
 
-def test_no_hint_when_stderr_is_not_a_terminal(
+def test_off_a_terminal_the_hint_is_printed_too(
     run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
 ):
+    """CI and pipes get the one-shot hint, never a blocking prompt."""
     stub_cli()
     _newer_release(monkeypatch, tty=False)
     repo, _bare = git_repo_synced
     assert run(repo) == 0
-    assert "99.0.0" not in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "aicp 99.0.0 is available (you have " in err
+    assert "  aicp update" in err
 
 
 def test_update_check_off_prints_no_hint(
@@ -630,8 +635,95 @@ def test_ctrl_c_during_the_hint_lookup_is_swallowed(aicprc, monkeypatch, capsys)
         raise KeyboardInterrupt
 
     monkeypatch.setattr(update_kit, "check", interrupted)
-    cli._hint_update()  # must not raise
+    cli._offer_update()  # must not raise
     assert capsys.readouterr().err == ""
+
+
+def _on_a_terminal(monkeypatch, answer: str) -> list[str]:
+    """Pretend stdin/stderr are a TTY and answer the prompt with *answer*;
+    returns the release-notes URLs the prompt was shown."""
+    shown: list[str] = []
+    _newer_release(monkeypatch, interactive=True)
+    monkeypatch.setattr(
+        cli.menu, "update_prompt", lambda _latest, _current, notes, **_k: shown.append(notes) or answer
+    )
+    return shown
+
+
+def test_on_a_terminal_the_update_is_asked_instead_of_hinted(
+    run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
+):
+    stub_cli()
+    shown = _on_a_terminal(monkeypatch, cli.menu.SKIP)
+    repo, _bare = git_repo_synced
+    assert run(repo) == 0
+    assert shown == ["https://github.com/weskao/aicp/releases/tag/v99.0.0"]
+    assert "is available" not in capsys.readouterr().err
+
+
+def test_skip_until_next_version_is_remembered(
+    run, aicprc, git_repo_synced, stub_cli, monkeypatch
+):
+    stub_cli()
+    shown = _on_a_terminal(monkeypatch, cli.menu.SKIP_VERSION)
+    repo, _bare = git_repo_synced
+    assert run(repo) == 0
+    cache = Path.home() / ".aicp" / "update-check.json"
+    assert json.loads(cache.read_text(encoding="utf-8"))["skipped"] == "v99.0.0"
+    assert run(repo) == 0  # the same release is not asked about again
+    assert len(shown) == 1
+    monkeypatch.setattr(update_kit, "check", lambda **_k: "v99.1.0")
+    assert run(repo) == 0  # a newer one is
+    assert len(shown) == 2
+
+
+def test_skip_asks_again_next_run(run, aicprc, git_repo_synced, stub_cli, monkeypatch):
+    stub_cli()
+    shown = _on_a_terminal(monkeypatch, cli.menu.SKIP)
+    repo, _bare = git_repo_synced
+    assert run(repo) == 0
+    assert run(repo) == 0
+    assert len(shown) == 2
+
+
+@pytest.mark.parametrize("code", [0, 1, 2])
+def test_update_now_installs_the_newest_tag_without_changing_the_exit_code(
+    code, run, aicprc, git_repo_synced, stub_cli, monkeypatch, capsys
+):
+    stub_cli()
+    _on_a_terminal(monkeypatch, cli.menu.UPDATE_NOW)
+    seen: list[dict] = []
+    monkeypatch.setattr(update_kit, "update", lambda **kw: seen.append(kw) or code)
+    repo, _bare = git_repo_synced
+    assert run(repo) == 0
+    assert len(seen) == 1
+    assert (seen[0]["app"], seen[0]["repo"], seen[0]["dist"]) == ("aicp", "weskao/aicp", "aicp-cli")
+    # the same install `aicp update` runs, skill-upgrade offer included
+    assert seen[0]["after"] == [[sys.executable, "-I", "-m", "aicp.cli", "--post-update"]]
+    # a failed install names the manual command; 2 already printed update-kit's own
+    assert ("run it yourself: aicp update" in capsys.readouterr().err) == (code == 1)
+
+
+def test_ctrl_c_at_the_prompt_is_a_skip(run, aicprc, git_repo_synced, stub_cli, monkeypatch):
+    stub_cli()
+    _newer_release(monkeypatch, interactive=True)
+
+    def interrupted(*_a, **_k):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.menu, "update_prompt", interrupted)
+    repo, _bare = git_repo_synced
+    assert run(repo) == 0
+    assert not (Path.home() / ".aicp" / "update-check.json").exists()
+
+
+@pytest.mark.parametrize("argv", [["update"], ["--post-update"]])
+def test_the_update_commands_never_ask(argv, run, aicprc, git_repo, monkeypatch):
+    shown = _on_a_terminal(monkeypatch, cli.menu.UPDATE_NOW)
+    monkeypatch.setattr(update_kit, "update", lambda **_k: 0)
+    monkeypatch.setattr(cli.menu, "post_update", lambda: 0)
+    assert run(git_repo, *argv) == 0
+    assert shown == []
 
 
 def test_update_hint_does_not_mix_into_json_stdout(

@@ -111,7 +111,10 @@ from .config import (
 from .contracts import ROSTER
 from .present import render_panel, width
 
-__all__ = ["ROWS", "MenuState", "Row", "config_menu", "post_update", "swap_ai"]
+__all__ = [
+    "ROWS", "SKIP", "SKIP_VERSION", "UPDATE_NOW", "MenuState", "Row", "config_menu",
+    "post_update", "swap_ai", "update_prompt",
+]
 
 _ROSTER_NAMES: tuple[str, ...] = tuple(c.name for c in ROSTER)
 #: What the AI CLI order row puts between two names, and the unit the order
@@ -1383,8 +1386,8 @@ ROWS: tuple[Row, ...] = (
         help=(
             "config_help_update_check",
             (
-                "On: checks the latest git tag in the background (at most once a day) "
-                "and prints a one-line hint on a terminal when a newer aicp exists."
+                "On: checks the latest git tag (at most once a day), "
+                "asks after the command whether to upgrade when a newer aicp exists."
             ),
         ),
         value=lambda s: _on_off(s, s.update_check),
@@ -1938,6 +1941,66 @@ def _reset_all_action(state: MenuState, stdin: IO[str], out: IO[str]) -> tuple[l
         + _t(state.lang, "config_reset_all_done", "all settings reset to defaults")
     )
     return [message], rows
+
+
+#: Update prompt answers, top to bottom; cli._offer_update acts on them.
+UPDATE_NOW = "update-now"
+SKIP = "skip"
+SKIP_VERSION = "skip-version"
+_UPDATE_ANSWERS = (UPDATE_NOW, SKIP, SKIP_VERSION)
+
+
+def _update_lines(lang: str, latest: str, current: str, notes_url: str, selected: int) -> list[str]:
+    """The update prompt, drawn like the Agents sub-panel: ``› N)`` marker,
+    bold highlighted row, dim detail column, key-hint footer."""
+    choices = (
+        (_t(lang, "update_now", "Update now"), "aicp update"),
+        (_t(lang, "update_skip", "Skip"), _t(lang, "update_skip_detail", "ask again next run")),
+        (
+            _t(lang, "update_skip_version", "Skip until next version"),
+            _t(lang, "update_skip_version_detail", "ask again once a newer version ships"),
+        ),
+    )
+    body: list[tuple[str, str]] = []
+    for i, (name, detail) in enumerate(choices, start=1):
+        marker = "›" if selected == i else " "
+        label = f"{marker} {i}) {name}"
+        if selected == i:
+            label = f"{RESET}{BOLD}{label}{RESET}"
+        body.append((label, f"{DIM}{detail}{RESET}"))
+    notes = [
+        _t(lang, "update_notes", "Release notes: %s", notes_url),
+        f"{DIM}" + _t(lang, "update_keys", "↑↓ select · ⏎ confirm · q/Ctrl+C skip") + f"{RESET}",
+    ]
+    title = "✨ " + _t(lang, "update_available", "aicp %s is available (you have %s)", latest, current)
+    return render_panel(body, title, CYAN, notes=notes)
+
+
+def update_prompt(latest: str, current: str, notes_url: str, *, stdin: IO[str], out: IO[str]) -> str:
+    """Ask what to do about a newer release: returns UPDATE_NOW / SKIP /
+    SKIP_VERSION and does nothing else. q or EOF is SKIP."""
+    lang = i18n.LANGUAGE
+    selected = 1
+    lines = _update_lines(lang, latest, current, notes_url, selected)
+    for line in lines:
+        print(line, file=out)
+    with key_session(stdin, out):
+        while True:
+            key = read_key(stdin, out)
+            if key == "quit":
+                return SKIP
+            if key in ("enter", "space"):
+                return _UPDATE_ANSWERS[selected - 1]
+            if key == "up":
+                selected = selected - 1 if selected > 1 else len(_UPDATE_ANSWERS)
+            elif key == "down":
+                selected = selected + 1 if selected < len(_UPDATE_ANSWERS) else 1
+            else:
+                continue
+            out.write(f"\033[{_frame_rows(lines, out)}A\033[J")
+            lines = _update_lines(lang, latest, current, notes_url, selected)
+            for line in lines:
+                print(line, file=out)
 
 
 def config_menu(

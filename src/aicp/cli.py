@@ -51,6 +51,7 @@ from . import (
     runner,
     skills,
 )
+from ._keyreader import is_interactive
 from ._utils import BLUE, BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW, have
 from .agents import executable
 from .contracts import ROSTER
@@ -270,8 +271,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--update", action="store_true",
         help=t(
             "help_update",
-            "update aicp to the latest git tag, no prompts (`aicp update` works too; "
-            "refused for a dev checkout)",
+            "always install the newest git tag, no prompts (`aicp update` works too; "
+            "a dev checkout is replaced too)",
         ),
     )
     # Internal: `update` runs this in the freshly installed aicp, whose code is
@@ -678,11 +679,7 @@ def _dispatch(args: argparse.Namespace) -> int:
     if args.post_update:
         return menu.post_update()
     if args.update:
-        return update_kit.update(
-            app="aicp", repo=_REPO, dist=_DIST, lang=i18n.LANGUAGE, out=sys.stderr,
-            # -I: update-kit runs this in the user's cwd; never import an aicp/ found there
-            after=[[sys.executable, "-I", "-m", "aicp.cli", "--post-update"]],
-        )
+        return _update()
     if args.doctor:
         return _doctor(as_json=args.json)
     if args.agents is not None:
@@ -711,26 +708,66 @@ def _dispatch(args: argparse.Namespace) -> int:
 
 _REPO = "weskao/aicp"
 _DIST = "aicp-cli"
-_updated = False  # set once the parsed command is `update`, so the hint stays quiet
+_RELEASE_NOTES = "https://github.com/weskao/aicp/releases/tag/v%s"
+_updated = False  # set once the parsed command is `update`, so the offer stays quiet
 
 
-def _hint_update() -> None:
-    """One cached line on a terminal's stderr when a newer tag exists. Never
-    raises, never changes the exit code; silent for `update` itself."""
+def _update() -> int:
+    """Install the newest tag — `aicp update` and the prompt's "Update now"."""
+    return update_kit.update(
+        app="aicp", repo=_REPO, dist=_DIST, lang=i18n.LANGUAGE, out=sys.stderr,
+        # -I: update-kit runs this in the user's cwd; never import an aicp/ found there
+        after=[[sys.executable, "-I", "-m", "aicp.cli", "--post-update"]],
+    )
+
+
+def _skip_path() -> Path:
+    return Path.home() / ".aicp" / "update-check.json"
+
+
+def _skipped() -> object:
     try:
-        if _updated:
-            return
-        if not update_kit.should_hint(sys.stderr) or not config.resolve().update_check:
+        return json.loads(_skip_path().read_text(encoding="utf-8")).get("skipped")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _offer_update() -> None:
+    """When a newer tag exists: ask on a terminal (Update now / Skip / Skip
+    until next version), off one (CI, pipes) a hint on stderr. Never raises,
+    never changes the exit code; silent for `update` itself."""
+    try:
+        if _updated or not config.resolve().update_check:
             return
         latest = update_kit.check(repo=_REPO, current=__version__)
-        if latest:
-            print(update_kit.hint("aicp", latest, __version__, i18n.LANGUAGE), file=sys.stderr)
-    except (Exception, KeyboardInterrupt):  # noqa: BLE001 - a hint must never fail the command; Ctrl-C just skips it
+        if not latest or latest == _skipped():
+            return
+        shown = latest.lstrip("vV")  # tags are vX.Y.Z; the prompt shows X.Y.Z as it always did
+        if not is_interactive(sys.stdin, sys.stderr):
+            print(
+                t("update_available", "aicp %s is available (you have %s)", shown, __version__),
+                file=sys.stderr,
+            )
+            print(t("update_command", "  aicp update"), file=sys.stderr)
+            return
+        answer = menu.update_prompt(
+            shown, __version__, _RELEASE_NOTES % shown, stdin=sys.stdin, out=sys.stderr
+        )
+        if answer == menu.SKIP_VERSION:
+            _skip_path().parent.mkdir(parents=True, exist_ok=True)
+            _skip_path().write_text(json.dumps({"skipped": latest}) + "\n", encoding="utf-8")
+        elif answer == menu.UPDATE_NOW and _update() == 1:  # 2 already printed its manual command
+            print(
+                f"{YELLOW}⚠{RESET} "
+                + t("update_failed", "upgrade did not finish — run it yourself: aicp update"),
+                file=sys.stderr,
+            )
+    except (Exception, KeyboardInterrupt):  # noqa: BLE001 - an update offer must never fail the command; Ctrl-C just skips it
         return
 
 
 def main(argv: list[str] | None = None) -> int:
-    """The one flow every way out goes through: the update hint is printed
+    """The one flow every way out goes through: the update offer comes
     last — after a command, --help/--version, or a usage error alike. A new
     command added to :func:`_dispatch` gets it free."""
     global _updated
@@ -738,7 +775,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _main(argv)
     finally:
-        _hint_update()
+        _offer_update()
 
 
 def _main(argv: list[str] | None) -> int:

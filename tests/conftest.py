@@ -10,6 +10,8 @@ port.
 
 - ``pinned_environment`` (autouse)      — every task; deterministic locale/
   width/isolation, no opt-in required.
+- ``_no_real_update`` (autouse)         — every task; nothing reinstalls the
+  real ``aicp`` or asks GitHub for tags.
 - ``_isolate_real_credential_store`` (autouse) — every task; no test may ever
   read or write this developer's real ``aicp`` keychain/libsecret/DPAPI item.
 - ``git_repo``                          — T2 (runner), T4 (git-verified
@@ -46,6 +48,7 @@ from pathlib import Path
 
 import pytest
 import telegram_kit
+import update_kit
 
 from aicp import telegram_store
 
@@ -103,6 +106,20 @@ def pinned_environment(tmp_path, monkeypatch):
     monkeypatch.delenv("TG_CHAT_ID", raising=False)
     monkeypatch.delenv("AICP_TELEGRAM_CHAT_ID", raising=False)
     yield fake_home
+
+
+@pytest.fixture(autouse=True)
+def _no_real_update(monkeypatch):
+    """No test may reinstall this developer's real ``aicp`` or hit the network:
+    ``update_kit.update`` replaces even a dev install with the newest tag.
+    ``pytest.fail`` is a BaseException, so the never-raises update offer can't
+    swallow it. Tests that exercise these re-patch them locally."""
+
+    def _refuse(**_kwargs):
+        pytest.fail("a test reached the real update_kit.update()")
+
+    monkeypatch.setattr(update_kit, "update", _refuse)
+    monkeypatch.setattr(update_kit, "check", lambda **_kwargs: None)
 
 
 @pytest.fixture(autouse=True)
