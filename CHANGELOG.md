@@ -1,3 +1,26 @@
+## [0.22.0] - 2026-10-16
+
+### 🚀 Features
+
+- **update:** [**breaking**] Add `aicp update` / `--update` via update-kit
+- **update:** Offer skill upgrades after an update
+- **update:** Restore the interactive update prompt
+
+### 🐛 Bug Fixes
+
+- **update:** Suppress the update hint after any parsed update command
+- **update:** Swallow Ctrl-C during the exit-time update hint
+- **update:** Isolate post-update module import
+
+### 💼 Other
+
+- **deps:** Resolve update-kit from PyPI
+- **deps:** [**breaking**] Bump update-kit to 0.2.1
+
+### 📚 Documentation
+
+- Show run and config screenshots atop readme
+- Describe the skills prompt after aicp update
 ## [0.21.1] - 2026-10-15
 
 ### 📚 Documentation
