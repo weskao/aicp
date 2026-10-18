@@ -1,3 +1,8 @@
+## [0.22.1] - 2026-10-18
+
+### ⚡ Performance
+
+- **safe-git-push:** Push first, fetch only when the remote rejects
 ## [0.22.0] - 2026-10-16
 
 ### 🚀 Features

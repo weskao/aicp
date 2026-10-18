@@ -6,4 +6,4 @@ interface shared across this package's modules.
 
 from __future__ import annotations
 
-__version__ = "0.22.0"
+__version__ = "0.22.1"
