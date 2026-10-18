@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Safe git push: fetch, analyze the graph, integrate only when it can't
-create an accidental self-merge or flatten intentional cross-branch merges,
-then push. See ../SKILL.md for the decision summary.
+"""Safe git push: push first (plain, never forced -- the server rejects any
+non-fast-forward), and only when rejected fetch, analyze the graph, integrate
+when it can't create an accidental self-merge or flatten intentional
+cross-branch merges, then push again. See ../SKILL.md for the decision summary.
 
 Exit code 0 = pushed or already in sync. Exit code 1 = stopped (see stderr).
 Never uses: git pull, git merge <remote-ref> (plain), git push --force*/--all/
@@ -28,7 +29,9 @@ class Retry(Exception):
 
 
 def git(*args, check=True):
-    p = subprocess.run(["git", *args], capture_output=True, text=True)
+    # LC_ALL=C: the rejection/up-to-date markers below match git's English messages.
+    p = subprocess.run(["git", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+                       env={**os.environ, "LC_ALL": "C"})
     if check and p.returncode != 0:
         raise RuntimeError(f"$ git {' '.join(args)}\n{p.stderr.strip()}")
     return p
@@ -99,7 +102,7 @@ def push(remote, branch, set_upstream):
     p = git("-c", "push.followTags=false", "push", *(["--set-upstream"] if set_upstream else []),
             remote, f"HEAD:refs/heads/{branch}", check=False)
     if p.returncode == 0:
-        return out("rev-parse", "HEAD")
+        return p.stderr
     low = p.stderr.lower()
     if any(m in low for m in PROTECTED_MARKERS):
         stop(f"remote rejected the push (protected branch):\n{p.stderr.strip()}\n"
@@ -109,27 +112,22 @@ def push(remote, branch, set_upstream):
     stop(f"push failed:\n{p.stderr.strip()}")
 
 
-def attempt(branch, remote, has_upstream, gd):
+def integrate(branch, remote, gd):
+    """After a rejected push: fetch and bring the remote's commits in.
+    Returns True when the branch only needed a fast-forward (nothing left to push)."""
     remote_ref = f"{remote}/{branch}"
     if not fetch_branch(remote, branch):
-        sha = push(remote, branch, set_upstream=True)
-        print(f"Safe push completed (first push).\nBranch: {branch}\nRemote: {remote_ref}\nRemote HEAD: {sha}")
-        return
-
+        return False  # remote branch vanished since the push; the next push recreates it
     # One walk replaces two is-ancestor checks: "<only on remote>\t<only local>".
     behind, ahead = map(int, out("rev-list", "--left-right", "--count", f"{remote_ref}...HEAD").split())
-    if not behind and not ahead:
-        print(f"Already synchronized with {remote_ref}. Nothing to push.")
-        return
+    if not behind:
+        return False  # transient rejection (e.g. ref lock), nothing new to integrate
     if not ahead:
         git("merge", "--ff-only", remote_ref)
         print(f"Fast-forwarded to {remote_ref}. Nothing to push.")
-        return
-    if behind:
-        integrate_diverged(remote_ref, branch, gd)
-
-    sha = push(remote, branch, set_upstream=not has_upstream)
-    print(f"Safe push completed.\nBranch: {branch}\nRemote: {remote_ref}\nRemote HEAD: {sha}")
+        return True
+    integrate_diverged(remote_ref, branch, gd)
+    return False
 
 
 def integrate_diverged(remote_ref, branch, gd):
@@ -170,16 +168,26 @@ def main():
     has_upstream = bool(git("config", "--get", f"branch.{branch}.merge", check=False).stdout.strip())
     remote = resolve_remote(branch, args.remote)
 
+    remote_ref = f"{remote}/{branch}"
     for attempt_no in range(MAX_PUSH_RETRIES + 1):
         try:
-            attempt(branch, remote, has_upstream, gd)
-            return
+            err = push(remote, branch, set_upstream=not has_upstream)
         except Retry as e:
             if attempt_no == MAX_PUSH_RETRIES:
                 stop(f"push kept getting rejected (remote changed concurrently) after "
                      f"{MAX_PUSH_RETRIES + 1} attempts:\n{e}")
-            print(f"Push rejected (remote changed); re-fetching and re-analyzing "
+            print(f"Push rejected (remote has new commits); fetching and integrating "
                   f"(attempt {attempt_no + 2}/{MAX_PUSH_RETRIES + 1})...", file=sys.stderr)
+            if integrate(branch, remote, gd):
+                return
+            continue
+        if "Everything up-to-date" in err:
+            print(f"Already synchronized with {remote_ref}. Nothing to push.")
+        else:
+            kind = " (first push)" if "[new branch]" in err else ""
+            print(f"Safe push completed{kind}.\nBranch: {branch}\nRemote: {remote_ref}\n"
+                  f"Remote HEAD: {out('rev-parse', 'HEAD')}")
+        return
 
 
 if __name__ == "__main__":

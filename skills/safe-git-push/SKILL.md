@@ -1,13 +1,15 @@
 ---
 name: safe-git-push
-description: Safely push the current git branch — fetch first, then integrate without `git pull`, self-merges, flattened merges, or force-push. Use whenever a `git push` is needed, especially on shared branches (develop/main).
+description: Safely push the current git branch — push first, and only if the remote rejects it fetch and integrate without `git pull`, self-merges, flattened merges, or force-push. Use whenever a `git push` is needed, especially on shared branches (develop/main).
 ---
 
 # Safe Git Push
 
-Fetch → compare local vs. remote by ancestry → integrate only if it can be
-done without inventing a self-merge or flattening a real merge → push. All
-of that logic lives in `scripts/safe_push.py`; this file just explains when
+Plain push (never forced, so the server refuses anything non-fast-forward) →
+only if rejected: fetch, compare local vs. remote by ancestry, integrate if it
+can be done without inventing a self-merge or flattening a real merge, push
+again. The common case (local ahead or first push) is one network round trip.
+All of that logic lives in `scripts/safe_push.py`; this file just explains when
 each branch of the decision runs and what to do with the result.
 
 ## Run it
@@ -32,16 +34,16 @@ stderr and handle it by hand.
 
 ## Decision summary
 
-| Situation after fetch | What the script does |
+| Situation | What the script does |
 |---|---|
 | Remote branch doesn't exist yet | First push, `--set-upstream` |
-| Local == remote | Nothing to push, reports and exits |
-| Local strictly ahead | Push directly, no rebase/merge |
-| Local strictly behind | `git merge --ff-only`, then nothing to push |
-| Diverged, local history has a likely self-merge not yet pushed | **Stops** — won't guess whether to keep or drop it |
-| Diverged, otherwise | Backs up HEAD to a throwaway ref, `git rebase --rebase-merges=no-rebase-cousins <remote>` (preserves real cross-branch merges instead of flattening them), verifies the merge count and ancestry didn't change, then pushes |
+| Local == remote | Push is a no-op, reports "already synchronized" |
+| Local strictly ahead | Push accepted directly, no fetch, no rebase/merge |
+| Local strictly behind (push rejected) | Fetch, `git merge --ff-only`, then nothing to push |
+| Rejected, diverged, local history has a likely self-merge not yet pushed | **Stops** — won't guess whether to keep or drop it |
+| Rejected, diverged, otherwise | Backs up HEAD to a throwaway ref, `git rebase --rebase-merges=no-rebase-cousins <remote>` (preserves real cross-branch merges instead of flattening them), verifies the merge count and ancestry didn't change, then pushes |
 | Rebase conflicts | Aborts the rebase, restores the branch, reports the conflicting files, stops |
-| Push rejected because the remote moved (non-fast-forward / fetch first) | Re-fetches and re-analyzes, up to 2 retries, never force-pushes |
+| Push rejected because the remote moved again | Re-fetches and re-analyzes, up to 2 retries, never force-pushes |
 | Push rejected for any other reason (e.g. a server hook declined it) | Stops with the remote's message — retrying wouldn't help |
 | Remote says protected branch / permission denied | Stops, tells you to use the normal PR/MR flow |
 
