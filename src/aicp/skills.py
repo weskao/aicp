@@ -518,9 +518,14 @@ def _inspect(cli: CLI, skill: str, home: Path | None) -> tuple[str, str | None]:
     if record and _matches(target, record["files"]):
         version = record["version"]
         ours, shipped = _as_tuple(version), _as_tuple(__version__)
-        # Same version but different bytes is older too: vendored content can
-        # change between releases without a bump (a dev checkout).
-        stale = ours < shipped or (ours == shipped and expected and record["files"] != expected)
+        # Bytes decide, not the version: a release that didn't touch this skill
+        # offers no upgrade, and vendored content can change without a bump (a
+        # dev checkout). A newer record is never stale (no downgrades); with
+        # nothing shipped to hash, the version is all there is.
+        if expected:
+            stale = ours <= shipped and record["files"] != expected
+        else:
+            stale = ours < shipped
         return (OURS_OLDER if stale else CURRENT), version
 
     # No record, or one the disk no longer matches. Content identical to what
@@ -675,10 +680,11 @@ def _write(dest: Path, data: bytes, *, backup: bool) -> Path | None:
 
 
 def _skip(name: str) -> bool:
-    """Sidecars are rewritten separately; macOS sprinkles .DS_Store around."""
+    """Sidecars are rewritten separately; macOS sprinkles .DS_Store around, and
+    a checkout's tests leave bytecode next to the vendored scripts."""
     return (
         name == SKILL_VERSION_MARKER
-        or name.endswith(SKILL_VERSION_SUFFIX)
+        or name.endswith((SKILL_VERSION_SUFFIX, ".pyc"))
         or name == ".DS_Store"
     )
 
@@ -751,10 +757,11 @@ def install(
                 action = UP_TO_DATE
                 # Adopt a shipped-identical copy the record doesn't vouch for,
                 # so the next content change upgrades it instead of calling it
-                # foreign.
+                # foreign; re-stamp an older record the release left untouched.
                 expected = _expected(spec, platform)
-                recorded = _load_state(home).get(str(target), {}).get("files")
-                if recorded != expected and _matches(target, expected):
+                record = _load_state(home).get(str(target), {})
+                stamped = record.get("files") == expected and record.get("version") == __version__
+                if not stamped and _matches(target, expected):
                     _record_install(target, expected, home)
             elif state == FOREIGN and not force:
                 action = KEPT

@@ -52,8 +52,9 @@ def age_record(target: Path, home: Path, version: str = "0.0.1") -> None:
     """Re-stamp this target's record as an OLDER aicp install, hashes intact.
 
     Hashes intact is the point: an aged record whose files still match is
-    ``ours_older`` (upgrade it), while an edited file is ``foreign`` however
-    old the record is. Tests that want the latter edit the file instead.
+    ``ours_older`` only when the shipped bytes changed (else ``current``),
+    while an edited file is ``foreign`` however old the record is. Tests that
+    want the latter edit the file instead.
     """
     records = skills._load_state(home)
     records[str(target)]["version"] = version
@@ -244,14 +245,32 @@ def test_state_current_after_install(configured):
     assert skills.detect(cli("codex"), "safe-git-push", home=h) == skills.CURRENT
 
 
-def test_state_ours_older(configured):
+def test_a_release_that_did_not_touch_a_skill_keeps_it_current(configured):
+    """An older record over bytes this version still ships is current — a bare
+    version bump must not offer an upgrade (`aicp --config` Skills row)."""
     h = configured("codex")
     skills.install([cli("codex")], home=h)
     age_record(h / ".codex/skills/commit/SKILL.md", h)
     age_record(h / ".codex/skills/safe-git-push", h)
 
-    assert skills.detect(cli("codex"), "commit", home=h) == skills.OURS_OLDER
-    assert skills.detect(cli("codex"), "safe-git-push", home=h) == skills.OURS_OLDER
+    assert skills.detect(cli("codex"), "commit", home=h) == skills.CURRENT
+    assert skills.detect(cli("codex"), "safe-git-push", home=h) == skills.CURRENT
+
+
+def test_an_untouched_skill_is_restamped_without_a_rewrite(configured):
+    """Installing re-stamps the record at this version, so the row stops
+    showing the old one — the file itself is left alone."""
+    h = configured("codex")
+    skills.install([cli("codex")], home=h)
+    target = h / ".codex/skills/commit/SKILL.md"
+    age_record(target, h)
+    before = target.stat().st_mtime_ns
+
+    results = skills.install([cli("codex")], home=h)
+
+    assert target.stat().st_mtime_ns == before
+    assert skills._load_state(h)[str(target)]["version"] == __version__
+    assert [r.action for r in results if r.skill == "commit"] == [skills.UP_TO_DATE]
 
 
 def test_changed_vendored_content_at_the_same_version_is_upgraded(configured, monkeypatch):
@@ -721,7 +740,7 @@ def test_a_legacy_sidecar_is_read_as_ours(configured):
     target = h / ".codex/skills/commit/SKILL.md"
     write_legacy_sidecar(target, is_dir=False, version="0.0.1")
 
-    assert skills.detect(cli("codex"), "commit", home=h) == skills.OURS_OLDER
+    assert skills.detect(cli("codex"), "commit", home=h) == skills.CURRENT
 
 
 def test_installing_migrates_a_legacy_sidecar_and_deletes_it(configured):
@@ -914,11 +933,14 @@ def test_a_missing_vendored_source_raises_instead_of_faking_success(
 
 
 def test_junk_files_are_not_installed(configured, tmp_path):
-    """A .DS_Store in the vendored tree must not be copied into every CLI."""
+    """A .DS_Store or a checkout's bytecode cache in the vendored tree must not
+    be copied into every CLI — nor hashed, or every install reads as stale."""
     vendored = tmp_path / "vendored-sgp"
-    vendored.mkdir()
+    (vendored / "scripts/__pycache__").mkdir(parents=True)
     (vendored / "SKILL.md").write_text("body\n", encoding="utf-8")
     (vendored / ".DS_Store").write_bytes(b"\x00junk")
+    (vendored / "scripts/__pycache__/safe_push.cpython-314.pyc").write_bytes(b"\x00pyc")
+    assert skills._owned(replace(skills.SKILLS["safe-git-push"], source=vendored)) == ("SKILL.md",)
     h = configured("codex")
     installed = h / ".codex/skills/safe-git-push"
 
