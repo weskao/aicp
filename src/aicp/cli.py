@@ -709,7 +709,6 @@ def _dispatch(args: argparse.Namespace) -> int:
 _REPO = "weskao/aicp"
 _DIST = "aicp-cli"
 _RELEASE_NOTES = "https://github.com/weskao/aicp/releases/tag/v%s"
-_CHECK_TTL = 600  # same as ai-accounts/codex-reset-watch; git ls-remote isn't under the 60/h REST API limit
 _updated = False  # set once the parsed command is `update`, so the offer stays quiet
 
 
@@ -740,7 +739,7 @@ def _offer_update() -> None:
     try:
         if _updated or not config.resolve().update_check:
             return
-        latest = update_kit.check(repo=_REPO, current=__version__, ttl=_CHECK_TTL)
+        latest = update_kit.check(repo=_REPO, current=__version__)
         if not latest or latest == _skipped():
             return
         shown = latest.lstrip("vV")  # tags are vX.Y.Z; the prompt shows X.Y.Z as it always did
