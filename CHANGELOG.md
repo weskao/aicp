@@ -1,3 +1,13 @@
+## [0.22.2] - 2026-10-19
+
+### 🐛 Bug Fixes
+
+- **update:** Recheck the latest release hourly
+- **update:** Recheck the latest release every 10 min
+
+### 💼 Other
+
+- **deps:** Bump update-kit to 0.2.2
 ## [0.22.1] - 2026-10-18
 
 ### ⚡ Performance
