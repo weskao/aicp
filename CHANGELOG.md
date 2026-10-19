@@ -1,3 +1,8 @@
+## [0.22.3] - 2026-10-19
+
+### 🐛 Bug Fixes
+
+- **skills:** Avoid needless skill upgrades
 ## [0.22.2] - 2026-10-19
 
 ### 🐛 Bug Fixes
