@@ -709,7 +709,7 @@ def _dispatch(args: argparse.Namespace) -> int:
 _REPO = "weskao/aicp"
 _DIST = "aicp-cli"
 _RELEASE_NOTES = "https://github.com/weskao/aicp/releases/tag/v%s"
-_CHECK_TTL = 3600  # update-kit's 24h default hid a fresh release for up to a day
+_CHECK_TTL = 600  # same as ai-accounts/codex-reset-watch; git ls-remote isn't under the 60/h REST API limit
 _updated = False  # set once the parsed command is `update`, so the offer stays quiet
 
 

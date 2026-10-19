@@ -1386,7 +1386,7 @@ ROWS: tuple[Row, ...] = (
         help=(
             "config_help_update_check",
             (
-                "On: checks the latest git tag (at most once an hour), "
+                "On: checks the latest git tag (at most once every 10 minutes), "
                 "asks after the command whether to upgrade when a newer aicp exists."
             ),
         ),

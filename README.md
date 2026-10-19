@@ -109,7 +109,7 @@ When a newer tag exists, every other command asks after it finishes: **Update no
 EOF means Skip, and the answer never changes the command's exit code. Off a
 terminal (CI, pipes) it prints a one-shot hint on stderr instead (`aicp X.Y.Z is
 available (you have …)` plus `aicp update`), never a blocking prompt. Never on
-stdout, checked at most once an hour, and never after `aicp update` itself. Every way of running `aicp` gets
+stdout, checked at most once every 10 minutes, and never after `aicp update` itself. Every way of running `aicp` gets
 it — any command, `--help`, `--version`, or a mistyped flag. Turn it off with the
 **Check for updates** row in `aicp --config`.
 The mechanism is the shared [`update-kit`](https://github.com/weskao/update-kit) library.
