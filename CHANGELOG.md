@@ -1,3 +1,8 @@
+## [0.22.4] - 2026-10-22
+
+### ⚙️ Miscellaneous Tasks
+
+- **lint:** Extend ruff with I, UP, B023, B904
 ## [0.22.3] - 2026-10-19
 
 ### 🐛 Bug Fixes
