@@ -1,3 +1,9 @@
+## [0.22.5] - 2026-10-29
+
+### 🚀 Features
+
+- **safe-git-push:** Exit 2 on rebase conflicts
+- **update:** Offer outdated skills once per version
 ## [0.22.4] - 2026-10-22
 
 ### ⚙️ Miscellaneous Tasks
