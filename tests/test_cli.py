@@ -717,6 +717,55 @@ def test_ctrl_c_at_the_prompt_is_a_skip(run, aicprc, git_repo_synced, stub_cli, 
     assert not (Path.home() / ".aicp" / "update-check.json").exists()
 
 
+def _outdated_skills(monkeypatch, *, interactive: bool, outdated: bool = True) -> list[dict]:
+    """No newer release, maybe an outdated installed skill, and a stub skills
+    screen; returns the screen's calls."""
+    monkeypatch.setattr(update_kit, "should_hint", lambda *_a, **_k: True)
+    monkeypatch.setattr(update_kit, "check", lambda **_k: None)
+    monkeypatch.setattr(cli, "is_interactive", lambda *_a: interactive)
+    monkeypatch.setattr(cli.skills, "changed", lambda: ["commit"] if outdated else [])
+    calls: list[dict] = []
+    monkeypatch.setattr(cli.menu, "post_update", lambda **kw: calls.append(kw) or 0)
+    return calls
+
+
+@pytest.mark.parametrize("outdated", [True, False])
+def test_with_no_newer_release_outdated_skills_are_offered_once_per_version(
+    outdated, run, aicprc, git_repo, monkeypatch
+):
+    calls = _outdated_skills(monkeypatch, interactive=True, outdated=outdated)
+    assert run(git_repo, "--doctor", "--json") == 0
+    assert calls == ([{"stdout": sys.stderr}] if outdated else [])
+    assert run(git_repo, "--doctor", "--json") == 0
+    assert len(calls) == int(outdated)  # whatever the answer, not asked again this version
+    assert cli._skipped("skills_checked") == cli.__version__
+
+
+def test_outdated_skills_are_not_offered_off_a_terminal(run, aicprc, git_repo, monkeypatch):
+    calls = _outdated_skills(monkeypatch, interactive=False)
+    assert run(git_repo, "--doctor", "--json") == 0
+    assert calls == []
+    assert cli._skipped("skills_checked") is None
+
+
+@pytest.mark.parametrize("interactive", [True, False])
+def test_post_update_on_a_terminal_counts_as_this_versions_skill_check(
+    interactive, run, aicprc, git_repo, monkeypatch
+):
+    calls = _outdated_skills(monkeypatch, interactive=interactive)
+    monkeypatch.setattr(cli.menu, "post_update", lambda: calls.append({}) or 0)
+    assert run(git_repo, "--post-update") == 0
+    # answered at post-update: the next run doesn't ask again; detached (Windows): it does
+    assert cli._skipped("skills_checked") == (cli.__version__ if interactive else None)
+
+
+def test_remembering_skills_keeps_a_skipped_release(aicprc):
+    cli._remember("skipped", "v99.0.0")
+    cli._remember("skills_checked", "1.0.0")
+    assert cli._skipped() == "v99.0.0"
+    assert cli._skipped("skills_checked") == "1.0.0"
+
+
 @pytest.mark.parametrize("argv", [["update"], ["--post-update"]])
 def test_the_update_commands_never_ask(argv, run, aicprc, git_repo, monkeypatch):
     shown = _on_a_terminal(monkeypatch, cli.menu.UPDATE_NOW)

@@ -677,7 +677,13 @@ def _dispatch(args: argparse.Namespace) -> int:
         global _updated
         _updated = True
     if args.post_update:
-        return menu.post_update()
+        rc = menu.post_update()
+        # Answered here, so the next run's check stays quiet. Not when nobody could
+        # answer (Windows runs this detached): that run's check is the real ask.
+        if is_interactive(sys.stdin, sys.stdout):
+            with contextlib.suppress(OSError):
+                _remember("skills_checked", __version__)
+        return rc
     if args.update:
         return _update()
     if args.doctor:
@@ -725,22 +731,48 @@ def _skip_path() -> Path:
     return Path.home() / ".aicp" / "update-check.json"
 
 
-def _skipped() -> object:
+def _skipped(key: str = "skipped") -> object:
     try:
-        return json.loads(_skip_path().read_text(encoding="utf-8")).get("skipped")
+        return json.loads(_skip_path().read_text(encoding="utf-8")).get(key)
     except (OSError, ValueError, AttributeError):
         return None
 
 
+def _remember(key: str, value: str) -> None:
+    try:
+        data = json.loads(_skip_path().read_text(encoding="utf-8"))
+        data = data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        data = {}
+    _skip_path().parent.mkdir(parents=True, exist_ok=True)
+    _skip_path().write_text(json.dumps({**data, key: value}) + "\n", encoding="utf-8")
+
+
+def _offer_skills() -> None:
+    """Skills older than this aicp ships — upgraded via uv/pipx, Windows'
+    background update, or a No at --post-update: ask, once per aicp version.
+
+    shortcut: a dev checkout changing vendored skills without a version bump is
+    not re-checked; --config's Skills row still is."""
+    if _skipped("skills_checked") == __version__:
+        return  # hashing every skill costs ~50 ms; the answer only moves with the version
+    if skills.changed():
+        menu.post_update(stdout=sys.stderr)  # stderr: keeps --json stdout clean
+    _remember("skills_checked", __version__)
+
+
 def _offer_update() -> None:
     """When a newer tag exists: ask on a terminal (Update now / Skip / Skip
-    until next version), off one (CI, pipes) a hint on stderr. Never raises,
+    until next version), off one (CI, pipes) a hint on stderr. With nothing
+    newer, a terminal is asked about outdated skills instead. Never raises,
     never changes the exit code; silent for `update` itself."""
     try:
         if _updated or not config.resolve().update_check:
             return
         latest = update_kit.check(repo=_REPO, current=__version__)
         if not latest or latest == _skipped():
+            if is_interactive(sys.stdin, sys.stderr):
+                _offer_skills()
             return
         shown = latest.lstrip("vV")  # tags are vX.Y.Z; the prompt shows X.Y.Z as it always did
         if not is_interactive(sys.stdin, sys.stderr):
@@ -754,8 +786,7 @@ def _offer_update() -> None:
             shown, __version__, _RELEASE_NOTES % shown, stdin=sys.stdin, out=sys.stderr
         )
         if answer == menu.SKIP_VERSION:
-            _skip_path().parent.mkdir(parents=True, exist_ok=True)
-            _skip_path().write_text(json.dumps({"skipped": latest}) + "\n", encoding="utf-8")
+            _remember("skipped", latest)
         elif answer == menu.UPDATE_NOW and _update() == 1:  # 2 already printed its manual command
             print(
                 f"{YELLOW}⚠{RESET} "
