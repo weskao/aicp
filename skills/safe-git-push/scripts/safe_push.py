@@ -5,6 +5,7 @@ when it can't create an accidental self-merge or flatten intentional
 cross-branch merges, then push again. See ../SKILL.md for the decision summary.
 
 Exit code 0 = pushed or already in sync. Exit code 1 = stopped (see stderr).
+Exit code 2 = rebase conflicts, branch restored; the agent resolves them (SKILL.md).
 Never uses: git pull, git merge <remote-ref> (plain), git push --force*/--all/
 --mirror/--tags/--no-verify, git reset --hard on anything but our own backup
 ref, git stash/clean/commit, or a branch/checkout switch.
@@ -17,6 +18,7 @@ import sys
 import time
 
 MAX_PUSH_RETRIES = 2
+CONFLICT_EXIT = 2  # rebase conflicts: the agent resolves them, see SKILL.md
 PROTECTED_MARKERS = ("protected branch", "permission denied", "not allowed to push")
 # The remote moved after our fetch; any other rejection (hook decline, etc.) won't fix itself.
 RACE_MARKERS = ("non-fast-forward", "fetch first", "cannot lock ref")
@@ -41,10 +43,10 @@ def out(*args):
     return git(*args).stdout.strip()
 
 
-def stop(msg):
+def stop(msg, code=1):
     print(f"Safe push aborted: {msg}", file=sys.stderr)
     print("No destructive git operation was performed; no shared history was rewritten.", file=sys.stderr)
-    sys.exit(1)
+    sys.exit(code)
 
 
 def check_preconditions():
@@ -146,8 +148,11 @@ def integrate_diverged(remote_ref, branch, gd):
     if git("rebase", "--rebase-merges=no-rebase-cousins", remote_ref, check=False).returncode != 0:
         conflicts = git("diff", "--name-only", "--diff-filter=U", check=False).stdout.strip()
         git("rebase", "--abort", check=False)
-        stop("rebase hit conflicts and was aborted; branch restored to its pre-rebase state.\n"
-             f"Conflicting files:\n{conflicts}\nResolve manually, then rerun.")
+        # Exit 2 = the caller resolves: SKILL.md "Rebase conflicts" redoes this rebase by hand.
+        stop(f"rebase onto {remote_ref} hit conflicts and was aborted; branch restored to its "
+             f"pre-rebase state.\nConflicting files:\n{conflicts}\n"
+             f"Resolve: git rebase --rebase-merges=no-rebase-cousins {remote_ref}, fix the "
+             f"conflicts, git rebase --continue, then rerun.", code=CONFLICT_EXIT)
 
     ok = (not os.path.isdir(os.path.join(gd, "rebase-merge"))
           and git("merge-base", "--is-ancestor", remote_ref, "HEAD", check=False).returncode == 0

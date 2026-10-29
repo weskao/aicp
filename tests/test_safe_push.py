@@ -92,6 +92,20 @@ def test_diverged_rebases_then_pushes(clones):
     assert git(a, "log", "--format=%s", "-3") == "mine\ntheirs\nbase"
 
 
+def test_rebase_conflict_exits_2_and_restores_branch(clones):
+    a, b, _ = clones
+    commit(b, "same")
+    git(b, "push", "-q", "origin", "main")
+    (a / "same").write_text("mine", encoding="utf-8")
+    git(a, "add", "same")
+    git(a, "commit", "-q", "-m", "mine")
+    head = git(a, "rev-parse", "HEAD")
+    r = safe_push(a)
+    assert r.returncode == 2, r.stderr
+    assert "rebase onto origin/main hit conflicts" in r.stderr and "same" in r.stderr
+    assert git(a, "rev-parse", "HEAD") == head
+    assert git(a, "status", "--porcelain") == ""
+
 def test_first_push_sets_upstream(clones):
     a, _, remote = clones
     git(a, "checkout", "-q", "-b", "feature")
